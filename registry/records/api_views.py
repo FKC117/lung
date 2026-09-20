@@ -1,10 +1,15 @@
 """Authenticated CRUD API for registry patient records."""
 
-from rest_framework import permissions, viewsets
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.response import Response
 
 from .models import ClinicalObservation, ClinicalTNMStaging, Diagnosis, Histopathology, IHCResult, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity
 from .serializers import build_record_serializer
+from .services.molecular import finalize_molecular_test
 
 
 class RecordPagination(PageNumberPagination):
@@ -76,6 +81,25 @@ class PathologicalTNMStagingViewSet(RecordModelViewSet):
 class MolecularTestViewSet(RecordModelViewSet):
     queryset = MolecularTest.objects.select_related("observation__patient", "panel_version", "method", "specimen").all()
     serializer_class = build_record_serializer(MolecularTest)
+
+    @action(detail=True, methods=["post"])
+    def finalize(self, request, pk=None):
+        """Validate and finalize a molecular test through the domain service."""
+        molecular_test = self.get_object()
+
+        try:
+            result = finalize_molecular_test(molecular_test.pk)
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages)
+
+        return Response(
+            {
+                "test": self.get_serializer(result["test"]).data,
+                "created_negatives": result["created_negatives"],
+                "already_completed": result["already_completed"],
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class MolecularTestResultViewSet(RecordModelViewSet):
