@@ -3,7 +3,7 @@
 from rest_framework import permissions, viewsets
 from rest_framework.pagination import PageNumberPagination
 
-from .models import ClinicalObservation, Diagnosis, Histopathology, MetastaticSiteRecord, Patient, PatientAnthropometry, PatientComorbidity
+from .models import ClinicalObservation, ClinicalTNMStaging, Diagnosis, Histopathology, IHCResult, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity
 from .serializers import build_record_serializer
 
 
@@ -51,3 +51,33 @@ class MetastaticSiteRecordViewSet(RecordModelViewSet):
 class HistopathologyViewSet(RecordModelViewSet):
     queryset = Histopathology.objects.select_related("observation__patient", "histopathology_details", "histopathology_type", "histopathology_site", "histopathology_grade").all()
     serializer_class = build_record_serializer(Histopathology)
+
+
+class IHCResultViewSet(RecordModelViewSet):
+    queryset = IHCResult.objects.select_related("observation__patient", "marker", "result").all()
+    serializer_class = build_record_serializer(IHCResult)
+
+
+class PathologicalStagingResultViewSet(RecordModelViewSet):
+    queryset = PathologicalStagingResult.objects.select_related("observation__patient", "feature", "result").all()
+    serializer_class = build_record_serializer(PathologicalStagingResult)
+
+
+class ClinicalTNMStagingViewSet(RecordModelViewSet):
+    queryset = ClinicalTNMStaging.objects.select_related("observation__patient", "t", "n", "m", "stage").all()
+    serializer_class = build_record_serializer(ClinicalTNMStaging)
+
+
+class PathologicalTNMStagingViewSet(RecordModelViewSet):
+    queryset = PathologicalTNMStaging.objects.select_related("observation__patient", "t", "n", "m", "stage").all()
+    serializer_class = build_record_serializer(PathologicalTNMStaging)
+
+
+class MolecularTestViewSet(RecordModelViewSet):
+    queryset = MolecularTest.objects.select_related("observation__patient", "panel_version", "method", "specimen").all()
+    serializer_class = build_record_serializer(MolecularTest)
+
+
+class MolecularTestResultViewSet(RecordModelViewSet):
+    queryset = MolecularTestResult.objects.select_related("molecular_test__observation__patient", "panel_target", "gene", "exon", "alteration_type", "result", "partner_gene", "clinical_significance").all()
+    serializer_class = build_record_serializer(MolecularTestResult)

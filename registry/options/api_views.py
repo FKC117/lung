@@ -58,9 +58,12 @@ OPTION_RESOURCES = {
     "molecular-specimens": models.MolecularPathologySpecimen,
     "molecular-genes": models.MolecularPathologyGene,
     "molecular-exons": models.MolecularPathologyExon,
-    "molecular-mutation": models.MolecularPathologyMutation,
-    "molecular-protein": models.MolecularPathologyProteinMutation,
+    "molecular-alteration-types": models.MolecularAlterationType,
     "molecular-results": models.MolecularPathologyResult,
+    "molecular-clinical-significances": models.MolecularClinicalSignificance,
+    "molecular-panels": models.MolecularPanel,
+    "molecular-panel-versions": models.MolecularPanelVersion,
+    "molecular-panel-targets": models.MolecularPanelTarget,
     "cancer-marker-names": models.CancerMarkerName,
     "surgery-modalities": models.SurgeryModality,
     "surgery-lateralities": models.SurgeryLaterality,
@@ -120,12 +123,14 @@ class OptionLookupViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, view
 
         # These dependencies drive cascading select inputs in React.
         for parameter, field in (
-            ("district", "district_id"),
-            ("gene", "gene_id"),
-            ("marker", "marker_id"),
-            ("protocol", "protocol_id"),
-            ("center", "center_id"),
-            ("doctor", "doctor_id"),
+            ("district", "district"),
+            ("gene", "gene"),
+            ("marker", "marker"),
+            ("protocol", "protocol"),
+            ("center", "center"),
+            ("doctor", "doctor"),
+            ("panel", "panel"),
+            ("panel_version", "panel_version"),
         ):
             if parameter in request.query_params and field in fields:
                 queryset = queryset.filter(**{field: request.query_params[parameter]})

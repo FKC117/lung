@@ -399,122 +399,6 @@ class TNMStage(models.Model):
         return self.name
 
 
-# class TNMStagingClinical(models.Model):
-#     t = models.ForeignKey(
-#         TNMT,
-#         on_delete=models.PROTECT,
-#         null=True,
-#         blank=True,
-#         related_name="clinical_t_staging",
-#     )
-
-#     n = models.ForeignKey(
-#         TNMN,
-#         on_delete=models.PROTECT,
-#         null=True,
-#         blank=True,
-#         related_name="clinical_n_staging",
-#     )
-
-#     m = models.ForeignKey(
-#         TNMM,
-#         on_delete=models.PROTECT,
-#         null=True,
-#         blank=True,
-#         related_name="clinical_m_staging",
-#     )
-
-#     stage = models.ForeignKey(
-#         TNMStage,
-#         on_delete=models.PROTECT,
-#         null=True,
-#         blank=True,
-#         related_name="clinical_stage_records",
-#     )
-
-#     date = models.DateField(
-#         null=True,
-#         blank=True,
-#     )
-
-#     def __str__(self):
-#         values = [
-#             self.t.name if self.t else None,
-#             self.n.name if self.n else None,
-#             self.m.name if self.m else None,
-#         ]
-
-#         tnm = " ".join(value for value in values if value)
-
-#         if self.stage and tnm:
-#             return f"{tnm} - Stage {self.stage.name}"
-
-#         if self.stage:
-#             return f"Stage {self.stage.name}"
-
-#         if tnm:
-#             return tnm
-
-#         return "Clinical TNM Staging"
-
-
-# class TNMStagingPathological(models.Model):
-#     t = models.ForeignKey(
-#         TNMT,
-#         on_delete=models.PROTECT,
-#         null=True,
-#         blank=True,
-#         related_name="pathological_t_staging",
-#     )
-
-#     n = models.ForeignKey(
-#         TNMN,
-#         on_delete=models.PROTECT,
-#         null=True,
-#         blank=True,
-#         related_name="pathological_n_staging",
-#     )
-
-#     m = models.ForeignKey(
-#         TNMM,
-#         on_delete=models.PROTECT,
-#         null=True,
-#         blank=True,
-#         related_name="pathological_m_staging",
-#     )
-
-#     stage = models.ForeignKey(
-#         TNMStage,
-#         on_delete=models.PROTECT,
-#         null=True,
-#         blank=True,
-#         related_name="pathological_stage_records",
-#     )
-
-#     date = models.DateField(
-#         null=True,
-#         blank=True,
-#     )
-
-#     def __str__(self):
-#         values = [
-#             self.t.name if self.t else None,
-#             self.n.name if self.n else None,
-#             self.m.name if self.m else None,
-#         ]
-
-#         tnm = " ".join(value for value in values if value)
-
-#         if self.stage and tnm:
-#             return f"{tnm} - Stage {self.stage.name}"
-
-#         if self.stage:
-#             return f"Stage {self.stage.name}"
-
-#         if tnm:
-#             return tnm
-
-#         return "Pathological TNM Staging"
 
 # TNM Staging Models Ends Here
 
@@ -552,31 +436,142 @@ class MolecularPathologyExon(models.Model):
     def __str__(self):
         return f"{self.gene.name} - {self.name}"
 
-class MolecularPathologyMutation(models.Model):
-    exon = models.ForeignKey(
-        MolecularPathologyExon,
-        on_delete=models.CASCADE,
-        related_name="mutations"
-    )
-    name = models.CharField(max_length=191)
+# class MolecularPathologyMutation(models.Model):
+#     exon = models.ForeignKey(
+#         MolecularPathologyExon,
+#         on_delete=models.CASCADE,
+#         related_name="mutations"
+#     )
+#     name = models.CharField(max_length=191)
 
-    class Meta:
-        unique_together = ("exon", "name")
+#     class Meta:
+#         unique_together = ("exon", "name")
 
-    def __str__(self):
-        return f"{self.exon.gene.name} - {self.exon.name} - {self.name}"
+#     def __str__(self):
+#         return f"{self.exon.gene.name} - {self.exon.name} - {self.name}"
 
-class MolecularPathologyProteinMutation(models.Model):
-    name = models.CharField(max_length=191, unique=True)
+# class MolecularPathologyProteinMutation(models.Model):
+#     name = models.CharField(max_length=191, unique=True)
+
+#     def __str__(self):
+#         return self.name
+
+class MolecularAlterationType(models.Model):
+    name = models.CharField(max_length=100, unique=True)
 
     def __str__(self):
         return self.name
 
 class MolecularPathologyResult(models.Model):
-    name = models.CharField(max_length=191, unique=True)
+    code = models.CharField(max_length=50, unique=True)
+    name = models.CharField(max_length=100, unique=True)
 
     def __str__(self):
         return self.name
+
+class MolecularClinicalSignificance(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+
+    def __str__(self):
+        return self.name
+
+
+class MolecularPanel(models.Model):
+    name = models.CharField(max_length=191, unique=True)
+    manufacturer = models.CharField(max_length=191, blank=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+
+class MolecularPanelVersion(models.Model):
+    class ReportingPolicy(models.TextChoices):
+        EXPLICIT_ONLY = "explicit_only", "Explicit results only"
+        UNREPORTED_NEGATIVE = (
+            "unreported_negative",
+            "Unreported covered targets are not detected",
+        )
+        POSITIVES_ONLY = "positives_only", "Positive findings only"
+
+    panel = models.ForeignKey(
+        MolecularPanel,
+        on_delete=models.PROTECT,
+        related_name="versions",
+    )
+    version = models.CharField(max_length=100)
+
+    method = models.ForeignKey(
+        MolecularPathologyMethod,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+
+    reporting_policy = models.CharField(
+        max_length=30,
+        choices=ReportingPolicy.choices,
+        default=ReportingPolicy.EXPLICIT_ONLY,
+    )
+
+    effective_from = models.DateField(null=True, blank=True)
+    effective_to = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["panel", "version"],
+                name="unique_molecular_panel_version",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.panel} - {self.version}"
+
+
+class MolecularPanelTarget(models.Model):
+    panel_version = models.ForeignKey(
+        MolecularPanelVersion,
+        on_delete=models.CASCADE,
+        related_name="targets",
+    )
+    gene = models.ForeignKey(
+        MolecularPathologyGene,
+        on_delete=models.PROTECT,
+        related_name="panel_targets",
+    )
+    alteration_type = models.ForeignKey(
+        MolecularAlterationType,
+        on_delete=models.PROTECT,
+    )
+
+    covered_exons = models.ManyToManyField(
+        MolecularPathologyExon,
+        blank=True,
+        related_name="panel_targets",
+    )
+
+    coverage_notes = models.TextField(blank=True)
+    is_reportable = models.BooleanField(default=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["panel_version", "gene", "alteration_type"],
+                name="unique_panel_gene_alteration",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.panel_version} - "
+            f"{self.gene} - {self.alteration_type}"
+        )
+
+
+
 
 class CancerMarkerName(models.Model):
     name = models.CharField(max_length=191, unique=True)

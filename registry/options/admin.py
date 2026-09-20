@@ -46,9 +46,12 @@ from .models import (
     MolecularPathologySpecimen,
     MolecularPathologyGene,
     MolecularPathologyExon,
-    MolecularPathologyMutation,
-    MolecularPathologyProteinMutation,
+    MolecularAlterationType,
     MolecularPathologyResult,
+    MolecularClinicalSignificance,
+    MolecularPanel,
+    MolecularPanelVersion,
+    MolecularPanelTarget,
 
     CancerMarkerName,
     
@@ -140,9 +143,9 @@ lookup_models = [
     MolecularPathologyMethod,
     MolecularPathologySpecimen,
     MolecularPathologyGene,
-    MolecularPathologyMutation,
-    MolecularPathologyProteinMutation,
+    MolecularAlterationType,
     MolecularPathologyResult,
+    MolecularClinicalSignificance,
     CancerMarkerName,
     SurgeryModality,
     SurgeryLaterality,
@@ -249,6 +252,31 @@ class MolecularPathologyExonAdmin(ImportExportModelAdmin):
     list_filter = ("gene",)
     search_fields = ("name", "gene__name")
     ordering = ("gene__name", "name")
+
+
+@admin.register(MolecularPanel)
+class MolecularPanelAdmin(ImportExportModelAdmin):
+    list_display = ("id", "name", "manufacturer", "is_active")
+    list_filter = ("is_active",)
+    search_fields = ("name", "manufacturer", "description")
+    ordering = ("name",)
+
+
+@admin.register(MolecularPanelVersion)
+class MolecularPanelVersionAdmin(ImportExportModelAdmin):
+    list_display = ("id", "panel", "version", "method", "reporting_policy", "is_active")
+    list_filter = ("reporting_policy", "is_active", "method")
+    search_fields = ("panel__name", "version", "method__name")
+    list_select_related = ("panel", "method")
+    ordering = ("panel__name", "version")
+
+
+@admin.register(MolecularPanelTarget)
+class MolecularPanelTargetAdmin(ImportExportModelAdmin):
+    list_display = ("id", "panel_version", "gene", "alteration_type", "is_reportable")
+    list_filter = ("alteration_type", "is_reportable")
+    search_fields = ("panel_version__panel__name", "panel_version__version", "gene__name")
+    list_select_related = ("panel_version__panel", "gene", "alteration_type")
 
 # @admin.register(CancerMarkerUnit)
 # class CancerMarkerUnitAdmin(ImportExportModelAdmin):

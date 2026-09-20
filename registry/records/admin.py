@@ -5,6 +5,12 @@ from .models import (
     ClinicalObservation,
     Diagnosis,
     Histopathology,
+    IHCResult,
+    ClinicalTNMStaging,
+    PathologicalTNMStaging,
+    PathologicalStagingResult,
+    MolecularTest,
+    MolecularTestResult,
     MetastaticSiteRecord,
     Patient,
     PatientAnthropometry,
@@ -67,3 +73,46 @@ class HistopathologyAdmin(ImportExportModelAdmin):
     list_filter = ("histopathology_type", "histopathology_grade", "histopathology_site")
     search_fields = ("observation__patient__patient_id", "observation__patient__name", "report_summary")
     list_select_related = ("observation__patient", "histopathology_type", "histopathology_grade", "histopathology_site")
+
+
+@admin.register(IHCResult)
+class IHCResultAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "marker", "result", "tested_at", "percentage")
+    list_filter = ("marker", "result")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "marker__name", "result__name")
+    list_select_related = ("observation__patient", "marker", "result")
+
+
+@admin.register(PathologicalStagingResult)
+class PathologicalStagingResultAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "feature", "result", "assessed_at", "percentage")
+    list_filter = ("feature", "result")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "feature__name", "result__name")
+    list_select_related = ("observation__patient", "feature", "result")
+
+
+class TNMStagingAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "t", "n", "m", "stage", "staged_on")
+    list_filter = ("t", "n", "m", "stage")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name")
+    list_select_related = ("observation__patient", "t", "n", "m", "stage")
+
+
+admin.site.register(ClinicalTNMStaging, TNMStagingAdmin)
+admin.site.register(PathologicalTNMStaging, TNMStagingAdmin)
+
+
+@admin.register(MolecularTest)
+class MolecularTestAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "panel_version", "method", "specimen", "reported_on", "status", "qc_status")
+    list_filter = ("status", "qc_status", "method", "specimen")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "laboratory", "accession_number")
+    list_select_related = ("observation__patient", "panel_version", "method", "specimen")
+
+
+@admin.register(MolecularTestResult)
+class MolecularTestResultAdmin(ImportExportModelAdmin):
+    list_display = ("id", "molecular_test", "gene", "exon", "alteration_type", "result", "origin")
+    list_filter = ("alteration_type", "result", "clinical_significance", "origin")
+    search_fields = ("molecular_test__observation__patient__patient_id", "gene__name", "exon__name", "dna_change", "protein_change", "common_name")
+    list_select_related = ("molecular_test__observation__patient", "gene", "exon", "alteration_type", "result", "clinical_significance")

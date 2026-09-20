@@ -47,9 +47,12 @@ from options.models import (
     MolecularPathologySpecimen,
     MolecularPathologyGene,
     MolecularPathologyExon,
-    MolecularPathologyMutation,
-    MolecularPathologyProteinMutation,
     MolecularPathologyResult,
+    MolecularClinicalSignificance,
+    MolecularAlterationType,
+    MolecularPanel,
+    MolecularPanelTarget,
+    MolecularPanelVersion,
 
     CancerMarkerName,
 
@@ -727,11 +730,175 @@ class PathologicalTNMStaging(models.Model):
     def __str__(self):
         return f"Pathological TNM - {self.observation}"
 
+# Molecular pathology starts here
 
+class MolecularTest(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
 
+    class QCStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PASSED = "passed", "Passed"
+        PARTIAL = "partial", "Partially passed"
+        FAILED = "failed", "Failed"
 
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="molecular_tests",
+    )
 
+    panel_version = models.ForeignKey(
+        MolecularPanelVersion,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="tests",
+    )
+    method = models.ForeignKey(
+        MolecularPathologyMethod,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+    specimen = models.ForeignKey(
+        MolecularPathologySpecimen,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
 
+    specimen_collected_on = models.DateField(null=True, blank=True)
+    tested_on = models.DateField(null=True, blank=True)
+    reported_on = models.DateField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+    qc_status = models.CharField(
+        max_length=20,
+        choices=QCStatus.choices,
+        default=QCStatus.PENDING,
+    )
+
+    laboratory = models.CharField(max_length=191, blank=True)
+    accession_number = models.CharField(max_length=100, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["observation", "reported_on"],
+                name="molecular_test_obs_date_idx",
+            ),
+            models.Index(
+                fields=["status", "qc_status"],
+                name="molecular_test_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Molecular test - {self.observation}"
+
+class MolecularTestResult(models.Model):
+    class Origin(models.TextChoices):
+        EXPLICIT = "explicit", "Explicitly reported"
+        DERIVED = "derived", "Automatically derived"
+        MANUAL = "manual", "Manually entered"
+
+    molecular_test = models.ForeignKey(
+        MolecularTest,
+        on_delete=models.CASCADE,
+        related_name="results",
+    )
+
+    panel_target = models.ForeignKey(
+        MolecularPanelTarget,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="test_results",
+    )
+
+    gene = models.ForeignKey(
+        MolecularPathologyGene,
+        on_delete=models.PROTECT,
+        related_name="test_results",
+    )
+    exon = models.ForeignKey(
+        MolecularPathologyExon,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="test_results",
+    )
+    alteration_type = models.ForeignKey(
+        MolecularAlterationType,
+        on_delete=models.PROTECT,
+    )
+    result = models.ForeignKey(
+        MolecularPathologyResult,
+        on_delete=models.PROTECT,
+    )
+
+    partner_gene = models.ForeignKey(
+        MolecularPathologyGene,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="fusion_partner_results",
+    )
+
+    dna_change = models.CharField(max_length=191, blank=True)
+    protein_change = models.CharField(max_length=191, blank=True)
+    common_name = models.CharField(max_length=191, blank=True)
+
+    variant_allele_frequency = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    copy_number = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
+    clinical_significance = models.ForeignKey(
+        MolecularClinicalSignificance,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+
+    origin = models.CharField(
+        max_length=20,
+        choices=Origin.choices,
+        default=Origin.EXPLICIT,
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["molecular_test", "gene"],
+                name="molecular_result_test_gene_idx",
+            ),
+            models.Index(
+                fields=["gene", "result"],
+                name="molecular_gene_result_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.gene} - {self.result}"
 
 
 
