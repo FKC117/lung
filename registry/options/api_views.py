@@ -54,8 +54,6 @@ OPTION_RESOURCES = {
     "tnm-n": models.TNMN,
     "tnm-m": models.TNMM,
     "tnm-stages": models.TNMStage,
-    "clinical-tnm-stagings": models.TNMStagingClinical,
-    "pathological-tnm-stagings": models.TNMStagingPathological,
     "molecular-methods": models.MolecularPathologyMethod,
     "molecular-specimens": models.MolecularPathologySpecimen,
     "molecular-genes": models.MolecularPathologyGene,

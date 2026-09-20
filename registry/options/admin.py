@@ -41,8 +41,6 @@ from .models import (
     TNMN,
     TNMM,
     TNMStage,
-    TNMStagingClinical,
-    TNMStagingPathological,
 
     MolecularPathologyMethod,
     MolecularPathologySpecimen,
@@ -244,30 +242,6 @@ class DiagnosisDiseaseSubgroupAdmin(ImportExportModelAdmin):
     search_fields = ("name", "disease_group__name")
     ordering = ("disease_group__name", "name")
 
-@admin.register(TNMStagingClinical)
-class TNMStagingClinicalAdmin(ImportExportModelAdmin):
-    list_display = ("id", "t", "n", "m", "stage", "date")
-    list_filter = ("t", "n", "m", "stage")
-    search_fields = (
-        "t__name",
-        "n__name",
-        "m__name",
-        "stage__name",
-    )
-    ordering = ("-date",)
-
-
-@admin.register(TNMStagingPathological)
-class TNMStagingPathologicalAdmin(ImportExportModelAdmin):
-    list_display = ("id", "t", "n", "m", "stage", "date")
-    list_filter = ("t", "n", "m", "stage")
-    search_fields = (
-        "t__name",
-        "n__name",
-        "m__name",
-        "stage__name",
-    )
-    ordering = ("-date",)
 
 @admin.register(MolecularPathologyExon)
 class MolecularPathologyExonAdmin(ImportExportModelAdmin):

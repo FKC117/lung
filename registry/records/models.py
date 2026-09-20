@@ -42,9 +42,7 @@ from options.models import (
     TNMN,
     TNMM,
     TNMStage,
-    TNMStagingClinical as ClinicalTNMStagingOption,
-    TNMStagingPathological as PathologicalTNMStagingOption,
-
+    
     MolecularPathologyMethod,
     MolecularPathologySpecimen,
     MolecularPathologyGene,
@@ -552,5 +550,199 @@ class Histopathology(models.Model):
 
     def __str__(self):
         return f"Histopathology for {self.observation}"
+
+class IHCResult(models.Model):
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="ihc_results",
+    )
+    tested_at = models.DateField(null=True, blank=True)
+
+    marker = models.ForeignKey(
+        IHCCycle,
+        on_delete=models.PROTECT,
+    )
+    result = models.ForeignKey(
+        IHCCycleResult,
+        on_delete=models.PROTECT,
+    )
+
+    percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["observation", "tested_at"],
+                name="ihc_obs_date_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["observation", "tested_at", "marker"],
+                name="unique_ihc_marker_date",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.marker} - {self.result}"
+
+class PathologicalStagingResult(models.Model):
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="pathological_staging_results",
+    )
+    assessed_at = models.DateField(null=True, blank=True)
+
+    feature = models.ForeignKey(
+        IHCStagingCycle,
+        on_delete=models.PROTECT,
+    )
+    result = models.ForeignKey(
+        IHCStagingCycleResult,
+        on_delete=models.PROTECT,
+    )
+
+    percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["observation", "assessed_at"],
+                name="pathstage_obs_date_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["observation", "assessed_at", "feature"],
+                name="unique_pathstage_feature_date",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.feature} - {self.result}"
+
+class ClinicalTNMStaging(models.Model):
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="clinical_tnm_stagings",
+    )
+
+    t = models.ForeignKey(
+        TNMT,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+    n = models.ForeignKey(
+        TNMN,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+    m = models.ForeignKey(
+        TNMM,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+    stage = models.ForeignKey(
+        TNMStage,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+
+    staged_on = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["observation", "staged_on"],
+                name="clinical_tnm_obs_date_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Clinical TNM - {self.observation}"
+
+class PathologicalTNMStaging(models.Model):
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="pathological_tnm_stagings",
+    )
+
+    t = models.ForeignKey(
+        TNMT,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+    n = models.ForeignKey(
+        TNMN,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+    m = models.ForeignKey(
+        TNMM,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+    stage = models.ForeignKey(
+        TNMStage,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+    )
+
+    staged_on = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["observation", "staged_on"],
+                name="path_tnm_obs_date_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Pathological TNM - {self.observation}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

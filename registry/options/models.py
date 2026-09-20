@@ -399,122 +399,122 @@ class TNMStage(models.Model):
         return self.name
 
 
-class TNMStagingClinical(models.Model):
-    t = models.ForeignKey(
-        TNMT,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="clinical_t_staging",
-    )
+# class TNMStagingClinical(models.Model):
+#     t = models.ForeignKey(
+#         TNMT,
+#         on_delete=models.PROTECT,
+#         null=True,
+#         blank=True,
+#         related_name="clinical_t_staging",
+#     )
 
-    n = models.ForeignKey(
-        TNMN,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="clinical_n_staging",
-    )
+#     n = models.ForeignKey(
+#         TNMN,
+#         on_delete=models.PROTECT,
+#         null=True,
+#         blank=True,
+#         related_name="clinical_n_staging",
+#     )
 
-    m = models.ForeignKey(
-        TNMM,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="clinical_m_staging",
-    )
+#     m = models.ForeignKey(
+#         TNMM,
+#         on_delete=models.PROTECT,
+#         null=True,
+#         blank=True,
+#         related_name="clinical_m_staging",
+#     )
 
-    stage = models.ForeignKey(
-        TNMStage,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="clinical_stage_records",
-    )
+#     stage = models.ForeignKey(
+#         TNMStage,
+#         on_delete=models.PROTECT,
+#         null=True,
+#         blank=True,
+#         related_name="clinical_stage_records",
+#     )
 
-    date = models.DateField(
-        null=True,
-        blank=True,
-    )
+#     date = models.DateField(
+#         null=True,
+#         blank=True,
+#     )
 
-    def __str__(self):
-        values = [
-            self.t.name if self.t else None,
-            self.n.name if self.n else None,
-            self.m.name if self.m else None,
-        ]
+#     def __str__(self):
+#         values = [
+#             self.t.name if self.t else None,
+#             self.n.name if self.n else None,
+#             self.m.name if self.m else None,
+#         ]
 
-        tnm = " ".join(value for value in values if value)
+#         tnm = " ".join(value for value in values if value)
 
-        if self.stage and tnm:
-            return f"{tnm} - Stage {self.stage.name}"
+#         if self.stage and tnm:
+#             return f"{tnm} - Stage {self.stage.name}"
 
-        if self.stage:
-            return f"Stage {self.stage.name}"
+#         if self.stage:
+#             return f"Stage {self.stage.name}"
 
-        if tnm:
-            return tnm
+#         if tnm:
+#             return tnm
 
-        return "Clinical TNM Staging"
+#         return "Clinical TNM Staging"
 
 
-class TNMStagingPathological(models.Model):
-    t = models.ForeignKey(
-        TNMT,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="pathological_t_staging",
-    )
+# class TNMStagingPathological(models.Model):
+#     t = models.ForeignKey(
+#         TNMT,
+#         on_delete=models.PROTECT,
+#         null=True,
+#         blank=True,
+#         related_name="pathological_t_staging",
+#     )
 
-    n = models.ForeignKey(
-        TNMN,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="pathological_n_staging",
-    )
+#     n = models.ForeignKey(
+#         TNMN,
+#         on_delete=models.PROTECT,
+#         null=True,
+#         blank=True,
+#         related_name="pathological_n_staging",
+#     )
 
-    m = models.ForeignKey(
-        TNMM,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="pathological_m_staging",
-    )
+#     m = models.ForeignKey(
+#         TNMM,
+#         on_delete=models.PROTECT,
+#         null=True,
+#         blank=True,
+#         related_name="pathological_m_staging",
+#     )
 
-    stage = models.ForeignKey(
-        TNMStage,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        related_name="pathological_stage_records",
-    )
+#     stage = models.ForeignKey(
+#         TNMStage,
+#         on_delete=models.PROTECT,
+#         null=True,
+#         blank=True,
+#         related_name="pathological_stage_records",
+#     )
 
-    date = models.DateField(
-        null=True,
-        blank=True,
-    )
+#     date = models.DateField(
+#         null=True,
+#         blank=True,
+#     )
 
-    def __str__(self):
-        values = [
-            self.t.name if self.t else None,
-            self.n.name if self.n else None,
-            self.m.name if self.m else None,
-        ]
+#     def __str__(self):
+#         values = [
+#             self.t.name if self.t else None,
+#             self.n.name if self.n else None,
+#             self.m.name if self.m else None,
+#         ]
 
-        tnm = " ".join(value for value in values if value)
+#         tnm = " ".join(value for value in values if value)
 
-        if self.stage and tnm:
-            return f"{tnm} - Stage {self.stage.name}"
+#         if self.stage and tnm:
+#             return f"{tnm} - Stage {self.stage.name}"
 
-        if self.stage:
-            return f"Stage {self.stage.name}"
+#         if self.stage:
+#             return f"Stage {self.stage.name}"
 
-        if tnm:
-            return tnm
+#         if tnm:
+#             return tnm
 
-        return "Pathological TNM Staging"
+#         return "Pathological TNM Staging"
 
 # TNM Staging Models Ends Here
 
