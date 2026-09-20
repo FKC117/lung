@@ -320,7 +320,7 @@ class ClinicalObservation(models.Model):
             ),
             models.Index(
                 fields=["prescription_date"],
-                name="obs_precription_idx",
+                name="obs_prescription_idx",
             ),
         ]
 
