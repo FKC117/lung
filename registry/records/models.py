@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from decimal import Decimal
 from django.db import models
 
@@ -805,6 +806,22 @@ class MolecularTest(models.Model):
     def __str__(self):
         return f"Molecular test - {self.observation}"
 
+    def save(self, *args, **kwargs):
+        if (
+            self.pk
+            and MolecularTest.objects.filter(
+                pk=self.pk,
+                status=self.Status.COMPLETED,
+            ).exists()
+        ):
+            raise ValidationError("A finalized molecular test cannot be modified.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status == self.Status.COMPLETED:
+            raise ValidationError("A finalized molecular test cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
 class MolecularTestResult(models.Model):
     class Origin(models.TextChoices):
         EXPLICIT = "explicit", "Explicitly reported"
@@ -899,6 +916,22 @@ class MolecularTestResult(models.Model):
 
     def __str__(self):
         return f"{self.gene} - {self.result}"
+
+    def _is_finalized(self):
+        return MolecularTest.objects.filter(
+            pk=self.molecular_test.pk,
+            status=MolecularTest.Status.COMPLETED,
+        ).exists()
+
+    def save(self, *args, **kwargs):
+        if self.pk and self._is_finalized():
+            raise ValidationError("Results for a finalized molecular test cannot be modified.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self._is_finalized():
+            raise ValidationError("Results for a finalized molecular test cannot be deleted.")
+        return super().delete(*args, **kwargs)
 
 
 

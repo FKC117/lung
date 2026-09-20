@@ -13,7 +13,7 @@ from records.models import MolecularTest, MolecularTestResult
 def finalize_molecular_test(test_id):
     molecular_test = (
         MolecularTest.objects
-        .select_for_update()
+        .select_for_update(of=("self",))
         .select_related("panel_version")
         .get(pk=test_id)
     )
@@ -60,7 +60,7 @@ def finalize_molecular_test(test_id):
     existing_results = list(
         MolecularTestResult.objects
         .filter(molecular_test=molecular_test)
-        .select_for_update()
+        .select_for_update(of=("self",))
         .select_related(
             "panel_target",
             "gene",
@@ -76,21 +76,32 @@ def finalize_molecular_test(test_id):
 
     for result in existing_results:
         if result.panel_target is not None:
-            if result.panel_target.panel_version != panel_version:
+            target = result.panel_target
+            if target.panel_version != panel_version:
                 raise ValidationError(
                     "A result is linked to a target from another panel version."
                 )
-            continue
 
-        target = target_lookup.get(
-            (result.gene, result.alteration_type)
-        )
-
-        if not target:
-            raise ValidationError(
-                f"{result.gene} / {result.alteration_type} "
-                "is not covered by this panel version."
+            if (
+                target.gene != result.gene
+                or target.alteration_type != result.alteration_type
+            ):
+                raise ValidationError(
+                    "A result's gene and alteration type must match its panel target."
+                )
+        else:
+            target = target_lookup.get(
+                (result.gene, result.alteration_type)
             )
+
+            if not target:
+                raise ValidationError(
+                    f"{result.gene} / {result.alteration_type} "
+                    "is not covered by this panel version."
+                )
+
+            result.panel_target = target
+            result.save(update_fields=["panel_target"])
 
         if result.exon is not None:
             covered_exons = set(target.covered_exons.all())
@@ -99,9 +110,6 @@ def finalize_molecular_test(test_id):
                 raise ValidationError(
                     f"{result.exon} is not covered by target {target}."
                 )
-
-        result.panel_target = target
-        result.save(update_fields=["panel_target"])
 
     created_negatives = 0
 

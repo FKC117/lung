@@ -82,6 +82,18 @@ class MolecularTestViewSet(RecordModelViewSet):
     queryset = MolecularTest.objects.select_related("observation__patient", "panel_version", "method", "specimen").all()
     serializer_class = build_record_serializer(MolecularTest)
 
+    def _ensure_mutable(self, molecular_test):
+        if molecular_test.status == MolecularTest.Status.COMPLETED:
+            raise ValidationError("A finalized molecular test cannot be modified.")
+
+    def perform_update(self, serializer):
+        self._ensure_mutable(self.get_object())
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._ensure_mutable(instance)
+        instance.delete()
+
     @action(detail=True, methods=["post"])
     def finalize(self, request, pk=None):
         """Validate and finalize a molecular test through the domain service."""
@@ -105,3 +117,21 @@ class MolecularTestViewSet(RecordModelViewSet):
 class MolecularTestResultViewSet(RecordModelViewSet):
     queryset = MolecularTestResult.objects.select_related("molecular_test__observation__patient", "panel_target", "gene", "exon", "alteration_type", "result", "partner_gene", "clinical_significance").all()
     serializer_class = build_record_serializer(MolecularTestResult)
+
+    @staticmethod
+    def _ensure_test_mutable(molecular_test):
+        if molecular_test.status == MolecularTest.Status.COMPLETED:
+            raise ValidationError("Results for a finalized molecular test cannot be modified.")
+
+    def perform_create(self, serializer):
+        self._ensure_test_mutable(serializer.validated_data["molecular_test"])
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._ensure_test_mutable(self.get_object().molecular_test)
+        self._ensure_test_mutable(serializer.validated_data.get("molecular_test", self.get_object().molecular_test))
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._ensure_test_mutable(instance.molecular_test)
+        instance.delete()
