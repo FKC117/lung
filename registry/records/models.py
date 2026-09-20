@@ -129,13 +129,13 @@ class Patient(models.Model):
     area = models.TextField(blank=True)
     marital_status = models.ForeignKey(
         MaritalStatus,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         null=True,
         blank=True
     )
     alcohol_history = models.ForeignKey(
         AlcoholHistory,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         null=True,
         blank=True
     )
@@ -309,6 +309,20 @@ class ClinicalObservation(models.Model):
 
     class Meta:
         ordering = ("-observed_at", "-id")
+        indexes = [
+            models.Index(
+                fields=["patient", '-observed_at'],
+                name="obs_patient_date_idx",
+            ),
+            models.Index(
+                fields=["status", "-observed_at"],
+                name="obs_status_date_idx",
+            ),
+            models.Index(
+                fields=["prescription_date"],
+                name="obs_precription_idx",
+            ),
+        ]
 
     def __str__(self):
         return f"Observation {self.pk} - {self.patient}"
@@ -372,8 +386,8 @@ class PatientAnthropometry(models.Model):
 
 
 class PatientComorbidity(models.Model):
-    patient = models.ForeignKey(
-        Patient,
+    observation = models.ForeignKey(
+        ClinicalObservation,
         on_delete=models.CASCADE,
         related_name="comorbidities",
     )
@@ -381,9 +395,26 @@ class PatientComorbidity(models.Model):
         Comorbidity,
         on_delete=models.PROTECT,
     )
+
     diagnosed_on = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["observation", "is_active"],
+                name="comorb_obs_active_idx",
+            ),
+            models.Index(
+                fields=["diagnosed_on"],
+                name="comorb_diagnosed_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.comorbidity} - {self.observation}"
+
 
 class Diagnosis(models.Model):
     observation = models.ForeignKey(
@@ -421,21 +452,54 @@ class Diagnosis(models.Model):
 
     diagnosis_in_details = models.TextField(blank=True)
 
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["observation", "diagnosed_on"],
+                name="diagnosis_obs_date_idx",
+            ),
+        ]
+
     def __str__(self):
         return f"Diagnosis for {self.observation}"
+
 
 class MetastaticSiteRecord(models.Model):
     diagnosis = models.ForeignKey(
         Diagnosis,
         on_delete=models.CASCADE,
-        related_name="metastatic_sites",
+        related_name="metastatic_site_records",
     )
     site = models.ForeignKey(
         DiagnosisMetastaticSite,
         on_delete=models.PROTECT,
     )
+
     identified_on = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["diagnosis", "identified_on"],
+                name="metastasis_diag_date_idx",
+            ),
+            models.Index(
+                fields=["site", "identified_on"],
+                name="metastasis_site_date_idx",
+            ),
+        ]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["diagnosis", "site", "identified_on"],
+                name="unique_diagnosis_metastatic_site_date",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.site} - {self.diagnosis}"
+
 
 class Histopathology(models.Model):
     observation = models.ForeignKey(
@@ -474,6 +538,19 @@ class Histopathology(models.Model):
 
     report_summary = models.TextField(blank=True)
 
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["observation", "biopsy_date"],
+                name="histopath_obs_biopsy_idx",
+            ),
+            models.Index(
+                fields=["histopathology_type", "report_date"],
+                name="histopath_type_date_idx",
+            ),
+        ]
+
     def __str__(self):
         return f"Histopathology for {self.observation}"
+
 
