@@ -1,5 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
 
 from options.models import (
     MolecularAlterationType,
@@ -7,6 +9,7 @@ from options.models import (
     MolecularPanelTarget,
     MolecularPanelVersion,
     MolecularPathologyGene,
+    MolecularPathologyExon,
     MolecularPathologyResult,
 )
 from records.models import ClinicalObservation, MolecularTest, MolecularTestResult, Patient
@@ -34,6 +37,8 @@ class MolecularFinalizationTests(TestCase):
             gene=self.gene,
             alteration_type=self.alteration_type,
         )
+        self.allowed_exon = MolecularPathologyExon.objects.create(gene=self.gene, name="19")
+        self.target.covered_exons.add(self.allowed_exon)
         MolecularPathologyResult.objects.create(code="not_detected", name="Not detected")
         self.molecular_test = MolecularTest.objects.create(
             observation=observation,
@@ -60,6 +65,57 @@ class MolecularFinalizationTests(TestCase):
         derived_result.notes = "late edit"
         with self.assertRaises(ValidationError):
             derived_result.save()
+
+        with self.assertRaises(ValidationError):
+            MolecularTestResult.objects.create(
+                molecular_test=self.molecular_test,
+                gene=self.gene,
+                alteration_type=self.alteration_type,
+                result=derived_result.result,
+            )
+
+    def test_finalization_rejects_failed_qc(self):
+        self.molecular_test.qc_status = MolecularTest.QCStatus.FAILED
+        self.molecular_test.save()
+
+        with self.assertRaisesMessage(ValidationError, "QC must pass"):
+            finalize_molecular_test(self.molecular_test.pk)
+
+    def test_finalization_rejects_an_exon_outside_target_coverage(self):
+        wrong_exon = MolecularPathologyExon.objects.create(gene=self.gene, name="20")
+        detected = MolecularPathologyResult.objects.create(code="detected", name="Detected")
+        MolecularTestResult.objects.create(
+            molecular_test=self.molecular_test,
+            gene=self.gene,
+            exon=wrong_exon,
+            alteration_type=self.alteration_type,
+            result=detected,
+        )
+
+        with self.assertRaisesMessage(ValidationError, "is not covered"):
+            finalize_molecular_test(self.molecular_test.pk)
+
+    def test_repeated_finalization_is_idempotent(self):
+        finalize_molecular_test(self.molecular_test.pk)
+        result = finalize_molecular_test(self.molecular_test.pk)
+
+        self.assertTrue(result["already_completed"])
+        self.assertEqual(result["created_negatives"], 0)
+
+    def test_api_cannot_mark_a_test_completed_directly(self):
+        user = get_user_model().objects.create_user(username="api-user", password="test-password")
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        response = client.patch(
+            f"/api/records/molecular-tests/{self.molecular_test.pk}/",
+            {"status": MolecularTest.Status.COMPLETED},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.molecular_test.refresh_from_db()
+        self.assertEqual(self.molecular_test.status, MolecularTest.Status.DRAFT)
 
     def test_finalization_rejects_a_linked_target_with_mismatched_gene(self):
         other_gene = MolecularPathologyGene.objects.create(name="ALK")

@@ -806,7 +806,11 @@ class MolecularTest(models.Model):
     def __str__(self):
         return f"Molecular test - {self.observation}"
 
-    def save(self, *args, **kwargs):
+    def save(self, *args, allow_finalization=False, **kwargs):
+        if self.status == self.Status.COMPLETED and not allow_finalization:
+            raise ValidationError(
+                "Molecular tests must be completed through finalization."
+            )
         if (
             self.pk
             and MolecularTest.objects.filter(
@@ -924,7 +928,7 @@ class MolecularTestResult(models.Model):
         ).exists()
 
     def save(self, *args, **kwargs):
-        if self.pk and self._is_finalized():
+        if self._is_finalized():
             raise ValidationError("Results for a finalized molecular test cannot be modified.")
         super().save(*args, **kwargs)
 

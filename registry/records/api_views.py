@@ -86,8 +86,18 @@ class MolecularTestViewSet(RecordModelViewSet):
         if molecular_test.status == MolecularTest.Status.COMPLETED:
             raise ValidationError("A finalized molecular test cannot be modified.")
 
+    @staticmethod
+    def _reject_direct_completion(serializer):
+        if serializer.validated_data.get("status") == MolecularTest.Status.COMPLETED:
+            raise ValidationError("Use the finalize endpoint to complete a molecular test.")
+
+    def perform_create(self, serializer):
+        self._reject_direct_completion(serializer)
+        serializer.save()
+
     def perform_update(self, serializer):
         self._ensure_mutable(self.get_object())
+        self._reject_direct_completion(serializer)
         serializer.save()
 
     def perform_destroy(self, instance):

@@ -154,7 +154,7 @@ def finalize_molecular_test(test_id):
         created_negatives = len(negative_results)
 
     molecular_test.status = MolecularTest.Status.COMPLETED
-    molecular_test.save(update_fields=["status"])
+    molecular_test.save(update_fields=["status"], allow_finalization=True)
 
     return {
         "test": molecular_test,
