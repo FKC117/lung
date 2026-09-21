@@ -815,6 +815,7 @@ class TumorRegressionGrade(models.Model):
 
 
 class DiseaseProgressionStatus(models.Model):
+    code = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=191, unique=True)
 
     class Meta:
@@ -825,6 +826,7 @@ class DiseaseProgressionStatus(models.Model):
         return self.name
 
 class SurvivalStatus(models.Model):
+    code = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=191, unique=True)
 
     class Meta:

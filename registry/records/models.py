@@ -1251,6 +1251,55 @@ class PathologicalResponseAssessment(models.Model):
         self.full_clean()
         super().save(*args, **kwargs)
 
+
+class DiseaseProgressionRecord(models.Model):
+    observation = models.ForeignKey(ClinicalObservation, on_delete=models.CASCADE, related_name="progression_records")
+    treatment_course = models.ForeignKey(TreatmentCourse, on_delete=models.PROTECT, null=True, blank=True, related_name="progression_records")
+    status = models.ForeignKey(DiseaseProgressionStatus, on_delete=models.PROTECT, related_name="progression_records")
+    assessed_on = models.DateField()
+    progression_date = models.DateField(null=True, blank=True)
+    progression_sites = models.ManyToManyField(ProgressionSite, blank=True, related_name="progression_records")
+    estimation_method = models.ForeignKey(ResponseEstimationMethod, on_delete=models.PROTECT, null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-assessed_on", "-id")
+        indexes = [
+            models.Index(fields=["observation", "assessed_on"], name="progression_obs_date_idx"),
+            models.Index(fields=["treatment_course", "assessed_on"], name="progression_course_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.status} - {self.assessed_on}"
+
+    def clean(self):
+        super().clean()
+        if self.treatment_course and self.treatment_course.observation.patient_id != self.observation.patient_id:
+            raise ValidationError({"observation": "The progression observation and treatment course must belong to the same patient."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class SurvivalFollowUp(models.Model):
+    observation = models.ForeignKey(ClinicalObservation, on_delete=models.CASCADE, related_name="survival_followups")
+    status = models.ForeignKey(SurvivalStatus, on_delete=models.PROTECT, related_name="followups")
+    followed_up_on = models.DateField()
+    death_date = models.DateField(null=True, blank=True)
+    cause_of_death = models.CharField(max_length=255, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-followed_up_on", "-id")
+        indexes = [
+            models.Index(fields=["observation", "followed_up_on"], name="survival_obs_date_idx"),
+            models.Index(fields=["status", "followed_up_on"], name="survival_status_date_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.status} - {self.followed_up_on}"
+
 class SurgeryRecord(models.Model):
     class Status(models.TextChoices):
         PLANNED = "planned", "Planned"

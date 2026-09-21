@@ -4,6 +4,7 @@ from import_export.admin import ImportExportModelAdmin
 from .models import (
     ClinicalObservation,
     Diagnosis,
+    DiseaseProgressionRecord,
     Histopathology,
     IHCResult,
     ClinicalTNMStaging,
@@ -21,6 +22,7 @@ from .models import (
     PatientComorbidity,
     TreatmentAdministration,
     TreatmentCourse,
+    SurvivalFollowUp,
 )
 
 
@@ -103,6 +105,22 @@ class TreatmentAdministrationAdmin(ImportExportModelAdmin):
     list_filter = ("status", "drug")
     search_fields = ("observation__patient__patient_id", "observation__patient__name", "drug__name")
     list_select_related = ("treatment_course", "observation__patient", "drug")
+
+
+@admin.register(DiseaseProgressionRecord)
+class DiseaseProgressionRecordAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "treatment_course", "status", "assessed_on", "progression_date")
+    list_filter = ("status", "estimation_method", "progression_sites")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "notes")
+    list_select_related = ("observation__patient", "treatment_course", "status", "estimation_method")
+
+
+@admin.register(SurvivalFollowUp)
+class SurvivalFollowUpAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "status", "followed_up_on", "death_date", "cause_of_death")
+    list_filter = ("status",)
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "cause_of_death", "notes")
+    list_select_related = ("observation__patient", "status")
 
 
 class ResponseAssessmentAdmin(ImportExportModelAdmin):
