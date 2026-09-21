@@ -30,6 +30,28 @@ def build_record_serializer(model):
     return type(f"{model.__name__}Serializer", (RecordSerializerBase,), {"Meta": meta})
 
 
+class AssessmentSerializerBase(RecordSerializerBase):
+    """Validate that a response assessment belongs to its treatment patient."""
+
+    def validate(self, attrs):
+        observation = attrs.get("observation", getattr(self.instance, "observation", None))
+        treatment_course = attrs.get("treatment_course", getattr(self.instance, "treatment_course", None))
+        if (
+            observation
+            and treatment_course
+            and observation.patient_id != treatment_course.observation.patient_id
+        ):
+            raise serializers.ValidationError(
+                {"observation": "The assessment observation and treatment course must belong to the same patient."}
+            )
+        return attrs
+
+
+def build_assessment_serializer(model):
+    meta = type("Meta", (), {"model": model, "fields": "__all__"})
+    return type(f"{model.__name__}Serializer", (AssessmentSerializerBase,), {"Meta": meta})
+
+
 class TreatmentCourseSerializer(RecordSerializerBase):
     class Meta:
         model = TreatmentCourse

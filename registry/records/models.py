@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from decimal import Decimal
 from django.db import models
 
@@ -1144,10 +1145,25 @@ class TreatmentAdministration(models.Model):
         super().save(*args, **kwargs)
 
 
+class AssessmentTimepoint(models.TextChoices):
+    BASELINE = "baseline", "Baseline"
+    ON_TREATMENT = "on_treatment", "On treatment"
+    POST_TREATMENT = "post_treatment", "Post treatment"
+    CONFIRMATORY = "confirmatory", "Confirmatory"
+
+
+def validate_assessment_patient(assessment):
+    if assessment.treatment_course.observation.patient_id != assessment.observation.patient_id:
+        raise ValidationError(
+            {"observation": "The assessment observation and treatment course must belong to the same patient."}
+        )
+
+
 class RECIST11Assessment(models.Model):
     observation = models.ForeignKey(ClinicalObservation, on_delete=models.CASCADE, related_name="recist11_assessments")
     treatment_course = models.ForeignKey(TreatmentCourse, on_delete=models.PROTECT, related_name="recist11_assessments")
     assessed_on = models.DateField()
+    timepoint = models.CharField(max_length=20, choices=AssessmentTimepoint.choices, default=AssessmentTimepoint.BASELINE)
     target_lesion = models.ForeignKey(RECISTTargetLesion, on_delete=models.PROTECT, null=True, blank=True)
     non_target_lesion = models.ForeignKey(RECISTNonTargetLesion, on_delete=models.PROTECT, null=True, blank=True)
     new_lesion = models.ForeignKey(RECISTNewLesion, on_delete=models.PROTECT, null=True, blank=True)
@@ -1157,44 +1173,83 @@ class RECIST11Assessment(models.Model):
 
     class Meta:
         ordering = ("-assessed_on", "-id")
+        indexes = [
+            models.Index(fields=["observation", "assessed_on"], name="recist_obs_date_idx"),
+            models.Index(fields=["treatment_course", "assessed_on"], name="recist_course_date_idx"),
+        ]
 
     def __str__(self):
         return f"RECIST 1.1 - {self.overall_response}"
+
+    def clean(self):
+        super().clean()
+        validate_assessment_patient(self)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 
 class IRECISTAssessment(models.Model):
     observation = models.ForeignKey(ClinicalObservation, on_delete=models.CASCADE, related_name="irecist_assessments")
     treatment_course = models.ForeignKey(TreatmentCourse, on_delete=models.PROTECT, related_name="irecist_assessments")
     assessed_on = models.DateField()
+    timepoint = models.CharField(max_length=20, choices=AssessmentTimepoint.choices, default=AssessmentTimepoint.BASELINE)
     target_lesion = models.ForeignKey(IRECISTTargetLesion, on_delete=models.PROTECT, null=True, blank=True)
     non_target_lesion = models.ForeignKey(IRECISTNonTargetLesion, on_delete=models.PROTECT, null=True, blank=True)
     new_lesion = models.ForeignKey(IRECISTNewLesion, on_delete=models.PROTECT, null=True, blank=True)
     overall_response = models.ForeignKey(IRECISTResponseResult, on_delete=models.PROTECT)
     estimation_method = models.ForeignKey(ResponseEstimationMethod, on_delete=models.PROTECT, null=True, blank=True)
     notes = models.TextField(blank=True)
+    confirmed_by = models.OneToOneField("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="confirms_irecist_assessment")
 
     class Meta:
         ordering = ("-assessed_on", "-id")
+        indexes = [
+            models.Index(fields=["observation", "assessed_on"], name="irecist_obs_date_idx"),
+            models.Index(fields=["treatment_course", "assessed_on"], name="irecist_course_date_idx"),
+        ]
 
     def __str__(self):
         return f"iRECIST - {self.overall_response}"
+
+    def clean(self):
+        super().clean()
+        validate_assessment_patient(self)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 
 class PathologicalResponseAssessment(models.Model):
     observation = models.ForeignKey(ClinicalObservation, on_delete=models.CASCADE, related_name="pathological_response_assessments")
     treatment_course = models.ForeignKey(TreatmentCourse, on_delete=models.PROTECT, related_name="pathological_response_assessments")
     assessed_on = models.DateField()
+    timepoint = models.CharField(max_length=20, choices=AssessmentTimepoint.choices, default=AssessmentTimepoint.POST_TREATMENT)
     response_category = models.ForeignKey(PathologicalResponseCategory, on_delete=models.PROTECT, null=True, blank=True)
-    residual_viable_tumor_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    residual_viable_tumor_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0), MaxValueValidator(100)])
     tumor_regression_grade = models.ForeignKey(TumorRegressionGrade, on_delete=models.PROTECT, null=True, blank=True)
     estimation_method = models.ForeignKey(ResponseEstimationMethod, on_delete=models.PROTECT, null=True, blank=True)
     notes = models.TextField(blank=True)
 
     class Meta:
         ordering = ("-assessed_on", "-id")
+        indexes = [
+            models.Index(fields=["observation", "assessed_on"], name="pathresp_obs_date_idx"),
+            models.Index(fields=["treatment_course", "assessed_on"], name="pathresp_course_date_idx"),
+        ]
 
     def __str__(self):
         return f"Pathological response - {self.response_category or 'Unclassified'}"
+
+    def clean(self):
+        super().clean()
+        validate_assessment_patient(self)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 class SurgeryRecord(models.Model):
     class Status(models.TextChoices):

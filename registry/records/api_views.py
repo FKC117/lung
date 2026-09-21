@@ -8,7 +8,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, Histopathology, IHCResult, IRECISTAssessment, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalResponseAssessment, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, RECIST11Assessment, TreatmentAdministration, TreatmentCourse
-from .serializers import TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_record_serializer
+from .serializers import TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_assessment_serializer, build_record_serializer
 from .services.molecular import finalize_molecular_test
 
 
@@ -75,17 +75,17 @@ class TreatmentAdministrationViewSet(RecordModelViewSet):
 
 class RECIST11AssessmentViewSet(RecordModelViewSet):
     queryset = RECIST11Assessment.objects.select_related("observation__patient", "treatment_course", "target_lesion", "non_target_lesion", "new_lesion", "overall_response", "estimation_method").all()
-    serializer_class = build_record_serializer(RECIST11Assessment)
+    serializer_class = build_assessment_serializer(RECIST11Assessment)
 
 
 class IRECISTAssessmentViewSet(RecordModelViewSet):
     queryset = IRECISTAssessment.objects.select_related("observation__patient", "treatment_course", "target_lesion", "non_target_lesion", "new_lesion", "overall_response", "estimation_method").all()
-    serializer_class = build_record_serializer(IRECISTAssessment)
+    serializer_class = build_assessment_serializer(IRECISTAssessment)
 
 
 class PathologicalResponseAssessmentViewSet(RecordModelViewSet):
     queryset = PathologicalResponseAssessment.objects.select_related("observation__patient", "treatment_course", "response_category", "tumor_regression_grade", "estimation_method").all()
-    serializer_class = build_record_serializer(PathologicalResponseAssessment)
+    serializer_class = build_assessment_serializer(PathologicalResponseAssessment)
 
 
 class IHCResultViewSet(RecordModelViewSet):
