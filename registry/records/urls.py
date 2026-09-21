@@ -8,14 +8,17 @@ from .api_views import (
     DiagnosisViewSet,
     HistopathologyViewSet,
     IHCResultViewSet,
+    IRECISTAssessmentViewSet,
     MetastaticSiteRecordViewSet,
     MolecularTestResultViewSet,
     MolecularTestViewSet,
     PathologicalStagingResultViewSet,
+    PathologicalResponseAssessmentViewSet,
     PathologicalTNMStagingViewSet,
     PatientAnthropometryViewSet,
     PatientComorbidityViewSet,
     PatientViewSet,
+    RECIST11AssessmentViewSet,
     TreatmentAdministrationViewSet,
     TreatmentCourseViewSet,
 )
@@ -31,6 +34,9 @@ router.register("records/histopathologies", HistopathologyViewSet, basename="his
 router.register("records/cancer-marker-results", CancerMarkerResultViewSet, basename="cancer-marker-result")
 router.register("records/treatment-courses", TreatmentCourseViewSet, basename="treatment-course")
 router.register("records/treatment-administrations", TreatmentAdministrationViewSet, basename="treatment-administration")
+router.register("records/recist11-assessments", RECIST11AssessmentViewSet, basename="recist11-assessment")
+router.register("records/irecist-assessments", IRECISTAssessmentViewSet, basename="irecist-assessment")
+router.register("records/pathological-response-assessments", PathologicalResponseAssessmentViewSet, basename="pathological-response-assessment")
 router.register("records/ihc-results", IHCResultViewSet, basename="ihc-result")
 router.register("records/pathological-staging-results", PathologicalStagingResultViewSet, basename="pathological-staging-result")
 router.register("records/clinical-tnm-stagings", ClinicalTNMStagingViewSet, basename="clinical-tnm-staging")

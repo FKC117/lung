@@ -80,15 +80,8 @@ from .models import (
 
     ProgressionSite,
     ResponseEstimationMethod,
-
-    RECIST11Assessment,
-    IRECISTAssessment,
-
-    PathologicalResponseTargetLesion,
-    PathologicalResponseNonTargetLesion,
-    PathologicalResponseNewLesion,
-    PathologicalResponseResult,
-    PathologicalResponseAssessment,
+    PathologicalResponseCategory,
+    TumorRegressionGrade,
 
     DiseaseProgressionStatus,
     SurvivalStatus
@@ -167,10 +160,8 @@ lookup_models = [
     IRECISTResponseResult,
     ProgressionSite,
     ResponseEstimationMethod,
-    PathologicalResponseTargetLesion,
-    PathologicalResponseNonTargetLesion,
-    PathologicalResponseNewLesion,
-    PathologicalResponseResult,
+    PathologicalResponseCategory,
+    TumorRegressionGrade,
     DiseaseProgressionStatus,
     SurvivalStatus,
 ]
@@ -262,83 +253,4 @@ class TreatmentProtocolDrugAdmin(ImportExportModelAdmin):
     ordering = ("protocol__name", "sequence")
 
 
-
-@admin.register(RECIST11Assessment)
-class RECIST11AssessmentAdmin(ImportExportModelAdmin):
-    list_display = (
-        "id",
-        "target_lesion",
-        "non_target_lesion",
-        "new_lesion",
-        "response_result",
-    )
-
-    list_filter = (
-        "target_lesion",
-        "non_target_lesion",
-        "new_lesion",
-        "response_result",
-    )
-
-    search_fields = (
-        "target_lesion__name",
-        "non_target_lesion__name",
-        "new_lesion__name",
-        "response_result__name",
-    )
-
-    ordering = ("id",)
-
-
-@admin.register(IRECISTAssessment)
-class IRECISTAssessmentAdmin(ImportExportModelAdmin):
-    list_display = (
-        "id",
-        "target_lesion",
-        "non_target_lesion",
-        "new_lesion",
-        "response_result",
-    )
-
-    list_filter = (
-        "target_lesion",
-        "non_target_lesion",
-        "new_lesion",
-        "response_result",
-    )
-
-    search_fields = (
-        "target_lesion__name",
-        "non_target_lesion__name",
-        "new_lesion__name",
-        "response_result__name",
-    )
-
-    ordering = ("id",)
-
-@admin.register(PathologicalResponseAssessment)
-class PathologicalResponseAssessmentAdmin(ImportExportModelAdmin):
-    list_display = (
-        "id",
-        "target_lesion",
-        "non_target_lesion",
-        "new_lesion",
-        "response_result",
-    )
-
-    list_filter = (
-        "target_lesion",
-        "non_target_lesion",
-        "new_lesion",
-        "response_result",
-    )
-
-    search_fields = (
-        "target_lesion__name",
-        "non_target_lesion__name",
-        "new_lesion__name",
-        "response_result__name",
-    )
-
-    ordering = ("id",)
 

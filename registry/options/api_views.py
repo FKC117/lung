@@ -85,10 +85,8 @@ OPTION_RESOURCES = {
     "irecist-response-results": models.IRECISTResponseResult,
     "progression-sites": models.ProgressionSite,
     "response-estimation-methods": models.ResponseEstimationMethod,
-    "pathological-response-target-lesions": models.PathologicalResponseTargetLesion,
-    "pathological-response-non-target-lesions": models.PathologicalResponseNonTargetLesion,
-    "pathological-response-new-lesions": models.PathologicalResponseNewLesion,
-    "pathological-response-results": models.PathologicalResponseResult,
+    "pathological-response-categories": models.PathologicalResponseCategory,
+    "tumor-regression-grades": models.TumorRegressionGrade,
     "disease-progression-statuses": models.DiseaseProgressionStatus,
     "survival-statuses": models.SurvivalStatus,
 }

@@ -83,15 +83,8 @@ from options.models import (
 
     ProgressionSite,
     ResponseEstimationMethod,
-
-    RECIST11Assessment,
-    IRECISTAssessment,
-
-    PathologicalResponseTargetLesion,
-    PathologicalResponseNonTargetLesion,
-    PathologicalResponseNewLesion,
-    PathologicalResponseResult,
-    PathologicalResponseAssessment,
+    PathologicalResponseCategory,
+    TumorRegressionGrade,
 
     DiseaseProgressionStatus,
     SurvivalStatus
@@ -1149,6 +1142,59 @@ class TreatmentAdministration(models.Model):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+
+
+class RECIST11Assessment(models.Model):
+    observation = models.ForeignKey(ClinicalObservation, on_delete=models.CASCADE, related_name="recist11_assessments")
+    treatment_course = models.ForeignKey(TreatmentCourse, on_delete=models.PROTECT, related_name="recist11_assessments")
+    assessed_on = models.DateField()
+    target_lesion = models.ForeignKey(RECISTTargetLesion, on_delete=models.PROTECT, null=True, blank=True)
+    non_target_lesion = models.ForeignKey(RECISTNonTargetLesion, on_delete=models.PROTECT, null=True, blank=True)
+    new_lesion = models.ForeignKey(RECISTNewLesion, on_delete=models.PROTECT, null=True, blank=True)
+    overall_response = models.ForeignKey(RECISTResponseResult, on_delete=models.PROTECT)
+    estimation_method = models.ForeignKey(ResponseEstimationMethod, on_delete=models.PROTECT, null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-assessed_on", "-id")
+
+    def __str__(self):
+        return f"RECIST 1.1 - {self.overall_response}"
+
+
+class IRECISTAssessment(models.Model):
+    observation = models.ForeignKey(ClinicalObservation, on_delete=models.CASCADE, related_name="irecist_assessments")
+    treatment_course = models.ForeignKey(TreatmentCourse, on_delete=models.PROTECT, related_name="irecist_assessments")
+    assessed_on = models.DateField()
+    target_lesion = models.ForeignKey(IRECISTTargetLesion, on_delete=models.PROTECT, null=True, blank=True)
+    non_target_lesion = models.ForeignKey(IRECISTNonTargetLesion, on_delete=models.PROTECT, null=True, blank=True)
+    new_lesion = models.ForeignKey(IRECISTNewLesion, on_delete=models.PROTECT, null=True, blank=True)
+    overall_response = models.ForeignKey(IRECISTResponseResult, on_delete=models.PROTECT)
+    estimation_method = models.ForeignKey(ResponseEstimationMethod, on_delete=models.PROTECT, null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-assessed_on", "-id")
+
+    def __str__(self):
+        return f"iRECIST - {self.overall_response}"
+
+
+class PathologicalResponseAssessment(models.Model):
+    observation = models.ForeignKey(ClinicalObservation, on_delete=models.CASCADE, related_name="pathological_response_assessments")
+    treatment_course = models.ForeignKey(TreatmentCourse, on_delete=models.PROTECT, related_name="pathological_response_assessments")
+    assessed_on = models.DateField()
+    response_category = models.ForeignKey(PathologicalResponseCategory, on_delete=models.PROTECT, null=True, blank=True)
+    residual_viable_tumor_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    tumor_regression_grade = models.ForeignKey(TumorRegressionGrade, on_delete=models.PROTECT, null=True, blank=True)
+    estimation_method = models.ForeignKey(ResponseEstimationMethod, on_delete=models.PROTECT, null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-assessed_on", "-id")
+
+    def __str__(self):
+        return f"Pathological response - {self.response_category or 'Unclassified'}"
 
 class SurgeryRecord(models.Model):
     class Status(models.TextChoices):

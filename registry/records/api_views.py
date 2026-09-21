@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, Histopathology, IHCResult, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, TreatmentAdministration, TreatmentCourse
+from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, Histopathology, IHCResult, IRECISTAssessment, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalResponseAssessment, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, RECIST11Assessment, TreatmentAdministration, TreatmentCourse
 from .serializers import TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_record_serializer
 from .services.molecular import finalize_molecular_test
 
@@ -71,6 +71,21 @@ class TreatmentCourseViewSet(RecordModelViewSet):
 class TreatmentAdministrationViewSet(RecordModelViewSet):
     queryset = TreatmentAdministration.objects.select_related("treatment_course", "observation__patient", "drug").all()
     serializer_class = TreatmentAdministrationSerializer
+
+
+class RECIST11AssessmentViewSet(RecordModelViewSet):
+    queryset = RECIST11Assessment.objects.select_related("observation__patient", "treatment_course", "target_lesion", "non_target_lesion", "new_lesion", "overall_response", "estimation_method").all()
+    serializer_class = build_record_serializer(RECIST11Assessment)
+
+
+class IRECISTAssessmentViewSet(RecordModelViewSet):
+    queryset = IRECISTAssessment.objects.select_related("observation__patient", "treatment_course", "target_lesion", "non_target_lesion", "new_lesion", "overall_response", "estimation_method").all()
+    serializer_class = build_record_serializer(IRECISTAssessment)
+
+
+class PathologicalResponseAssessmentViewSet(RecordModelViewSet):
+    queryset = PathologicalResponseAssessment.objects.select_related("observation__patient", "treatment_course", "response_category", "tumor_regression_grade", "estimation_method").all()
+    serializer_class = build_record_serializer(PathologicalResponseAssessment)
 
 
 class IHCResultViewSet(RecordModelViewSet):

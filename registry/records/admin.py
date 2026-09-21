@@ -7,6 +7,9 @@ from .models import (
     Histopathology,
     IHCResult,
     ClinicalTNMStaging,
+    RECIST11Assessment,
+    IRECISTAssessment,
+    PathologicalResponseAssessment,
     CancerMarkerResult,
     PathologicalTNMStaging,
     PathologicalStagingResult,
@@ -100,6 +103,25 @@ class TreatmentAdministrationAdmin(ImportExportModelAdmin):
     list_filter = ("status", "drug")
     search_fields = ("observation__patient__patient_id", "observation__patient__name", "drug__name")
     list_select_related = ("treatment_course", "observation__patient", "drug")
+
+
+class ResponseAssessmentAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "treatment_course", "assessed_on", "overall_response", "estimation_method")
+    list_filter = ("overall_response", "estimation_method")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "notes")
+    list_select_related = ("observation__patient", "treatment_course", "overall_response", "estimation_method")
+
+
+admin.site.register(RECIST11Assessment, ResponseAssessmentAdmin)
+admin.site.register(IRECISTAssessment, ResponseAssessmentAdmin)
+
+
+@admin.register(PathologicalResponseAssessment)
+class PathologicalResponseAssessmentAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "treatment_course", "assessed_on", "response_category", "residual_viable_tumor_percentage", "tumor_regression_grade")
+    list_filter = ("response_category", "tumor_regression_grade", "estimation_method")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "notes")
+    list_select_related = ("observation__patient", "treatment_course", "response_category", "tumor_regression_grade", "estimation_method")
 
 
 @admin.register(IHCResult)

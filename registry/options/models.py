@@ -798,176 +798,20 @@ class ResponseEstimationMethod(models.Model):
         return self.name
 
 
-# =========================================================
-# RECIST 1.1 ASSESSMENT
-# =========================================================
+class PathologicalResponseCategory(models.Model):
+    """Reusable pathology-specific response categories, e.g. pCR and MPR."""
 
-class RECIST11Assessment(models.Model):
-    target_lesion = models.ForeignKey(
-        RECISTTargetLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    non_target_lesion = models.ForeignKey(
-        RECISTNonTargetLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    new_lesion = models.ForeignKey(
-        RECISTNewLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    response_result = models.ForeignKey(
-        RECISTResponseResult,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    class Meta:
-        verbose_name = "RECIST 1.1 Assessment"
-        verbose_name_plural = "RECIST 1.1 Assessments"
-
-    def __str__(self):
-        if self.response_result:
-            return f"RECIST 1.1 - {self.response_result}"
-
-        return "RECIST 1.1 Assessment"
-
-
-# =========================================================
-# iRECIST ASSESSMENT
-# =========================================================
-
-class IRECISTAssessment(models.Model):
-    target_lesion = models.ForeignKey(
-        IRECISTTargetLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    non_target_lesion = models.ForeignKey(
-        IRECISTNonTargetLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    new_lesion = models.ForeignKey(
-        IRECISTNewLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    response_result = models.ForeignKey(
-        IRECISTResponseResult,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    class Meta:
-        verbose_name = "iRECIST Assessment"
-        verbose_name_plural = "iRECIST Assessments"
-
-    def __str__(self):
-        if self.response_result:
-            return f"iRECIST - {self.response_result}"
-
-        return "iRECIST Assessment"
-
-
-class PathologicalResponseTargetLesion(models.Model):
     name = models.CharField(max_length=191, unique=True)
-
-    class Meta:
-        verbose_name = "Pathological Response Target Lesion"
-        verbose_name_plural = "Pathological Response Target Lesions"
 
     def __str__(self):
         return self.name
 
 
-class PathologicalResponseNonTargetLesion(models.Model):
+class TumorRegressionGrade(models.Model):
     name = models.CharField(max_length=191, unique=True)
-
-    class Meta:
-        verbose_name = "Pathological Response Non-Target Lesion"
-        verbose_name_plural = "Pathological Response Non-Target Lesions"
 
     def __str__(self):
         return self.name
-
-
-class PathologicalResponseNewLesion(models.Model):
-    name = models.CharField(max_length=191, unique=True)
-
-    class Meta:
-        verbose_name = "Pathological Response New Lesion"
-        verbose_name_plural = "Pathological Response New Lesions"
-
-    def __str__(self):
-        return self.name
-
-
-class PathologicalResponseResult(models.Model):
-    name = models.CharField(max_length=191, unique=True)
-
-    class Meta:
-        verbose_name = "Pathological Response Result"
-        verbose_name_plural = "Pathological Response Results"
-
-    def __str__(self):
-        return self.name
-
-
-class PathologicalResponseAssessment(models.Model):
-    target_lesion = models.ForeignKey(
-        PathologicalResponseTargetLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    non_target_lesion = models.ForeignKey(
-        PathologicalResponseNonTargetLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    new_lesion = models.ForeignKey(
-        PathologicalResponseNewLesion,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    response_result = models.ForeignKey(
-        PathologicalResponseResult,
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-    )
-
-    class Meta:
-        verbose_name = "Pathological Response Assessment"
-        verbose_name_plural = "Pathological Response Assessments"
-
-    def __str__(self):
-        if self.response_result:
-            return f"Pathological Response - {self.response_result}"
-
-        return "Pathological Response Assessment"
 
 
 class DiseaseProgressionStatus(models.Model):
