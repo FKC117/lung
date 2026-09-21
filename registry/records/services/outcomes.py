@@ -12,7 +12,7 @@ def calculate_pfs(treatment_course):
     patient = treatment_course.observation.patient
     progression_date = (
         DiseaseProgressionRecord.objects.filter(
-            observation__patient=patient,
+            treatment_course=treatment_course,
             status__code="progressed",
             progression_date__isnull=False,
             progression_date__gte=index_date,
@@ -34,14 +34,25 @@ def calculate_pfs(treatment_course):
     )
     events = [("progression", progression_date), ("death", death_date)]
     event, event_date = min((item for item in events if item[1]), key=lambda item: item[1], default=(None, None))
+    no_progression_date = (
+        DiseaseProgressionRecord.objects.filter(
+            treatment_course=treatment_course,
+            status__code="no_progression",
+            assessed_on__gte=index_date,
+        )
+        .order_by("-assessed_on")
+        .values_list("assessed_on", flat=True)
+        .first()
+    )
     censor_date = None
     if event_date is None:
-        censor_date = (
+        last_follow_up = (
             SurvivalFollowUp.objects.filter(observation__patient=patient, followed_up_on__gte=index_date)
             .order_by("-followed_up_on")
             .values_list("followed_up_on", flat=True)
             .first()
         )
+        censor_date = max((date for date in (no_progression_date, last_follow_up) if date), default=None)
     end_date = event_date or censor_date
     return {"event": event, "event_date": event_date, "censored_on": censor_date, "duration_days": (end_date - index_date).days if end_date else None}
 

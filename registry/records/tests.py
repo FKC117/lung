@@ -202,6 +202,7 @@ class OutcomeAnalysisTests(TestCase):
             started_on=date(2026, 1, 1),
         )
         self.progressed = DiseaseProgressionStatus.objects.create(code="progressed", name="Progressed")
+        self.no_progression = DiseaseProgressionStatus.objects.create(code="no_progression", name="No progression")
         self.alive = SurvivalStatus.objects.create(code="alive", name="Alive")
         self.dead = SurvivalStatus.objects.create(code="dead", name="Dead")
 
@@ -223,9 +224,15 @@ class OutcomeAnalysisTests(TestCase):
 
     def test_pfs_is_censored_at_last_follow_up(self):
         SurvivalFollowUp.objects.create(observation=self.observation, status=self.alive, followed_up_on=date(2026, 1, 25))
+        DiseaseProgressionRecord.objects.create(
+            observation=self.observation,
+            treatment_course=self.course,
+            status=self.no_progression,
+            assessed_on=date(2026, 1, 27),
+        )
         result = calculate_pfs(self.course)
         self.assertIsNone(result["event"])
-        self.assertEqual((result["censored_on"], result["duration_days"]), (date(2026, 1, 25), 24))
+        self.assertEqual((result["censored_on"], result["duration_days"]), (date(2026, 1, 27), 26))
 
     def test_os_death_event(self):
         SurvivalFollowUp.objects.create(

@@ -60,6 +60,14 @@ class OutcomeSerializerBase(RecordSerializerBase):
         if "progression_date" in self.fields:
             assessed_on = attrs.get("assessed_on", getattr(self.instance, "assessed_on", None))
             progression_date = attrs.get("progression_date", getattr(self.instance, "progression_date", None))
+            observation = attrs.get("observation", getattr(self.instance, "observation", None))
+            treatment_course = attrs.get("treatment_course", getattr(self.instance, "treatment_course", None))
+            if (
+                observation
+                and treatment_course
+                and observation.patient_id != treatment_course.observation.patient_id
+            ):
+                errors["observation"] = "The progression observation and treatment course must belong to the same patient."
             if status_value and status_value.code == "progressed" and not progression_date:
                 errors["progression_date"] = "A progression date is required when status is progressed."
             if progression_date and assessed_on and progression_date > assessed_on:
