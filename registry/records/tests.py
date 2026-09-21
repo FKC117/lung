@@ -16,9 +16,12 @@ from options.models import (
     TreatmentModality,
     TreatmentProtocol,
     TreatmentProtocolDrug,
+    DiseaseProgressionStatus,
+    SurvivalStatus,
 )
-from records.models import ClinicalObservation, MolecularTest, MolecularTestResult, Patient, TreatmentAdministration, TreatmentCourse
+from records.models import ClinicalObservation, DiseaseProgressionRecord, MolecularTest, MolecularTestResult, Patient, SurvivalFollowUp, TreatmentAdministration, TreatmentCourse
 from records.services.molecular import finalize_molecular_test
+from records.services.outcomes import calculate_os, calculate_pfs
 
 
 class MolecularFinalizationTests(TestCase):
@@ -184,3 +187,56 @@ class TreatmentValidationTests(TestCase):
         self.assertIn("observation", error.exception.message_dict)
         self.assertIn("drug", error.exception.message_dict)
         self.assertIn("administered_on", error.exception.message_dict)
+
+
+class OutcomeAnalysisTests(TestCase):
+    def setUp(self):
+        self.patient = Patient.objects.create(registration_no="REG-O", patient_id="PAT-O", name="Outcome Patient")
+        self.observation = ClinicalObservation.objects.create(patient=self.patient)
+        modality = TreatmentModality.objects.create(name="Outcome therapy")
+        protocol = TreatmentProtocol.objects.create(name="Outcome protocol")
+        self.course = TreatmentCourse.objects.create(
+            observation=self.observation,
+            modality=modality,
+            protocol=protocol,
+            started_on=date(2026, 1, 1),
+        )
+        self.progressed = DiseaseProgressionStatus.objects.create(code="progressed", name="Progressed")
+        self.alive = SurvivalStatus.objects.create(code="alive", name="Alive")
+        self.dead = SurvivalStatus.objects.create(code="dead", name="Dead")
+
+    def test_pfs_event_by_progression(self):
+        DiseaseProgressionRecord.objects.create(
+            observation=self.observation, treatment_course=self.course, status=self.progressed,
+            assessed_on=date(2026, 1, 11), progression_date=date(2026, 1, 10),
+        )
+        result = calculate_pfs(self.course)
+        self.assertEqual((result["event"], result["duration_days"]), ("progression", 9))
+
+    def test_pfs_event_by_death(self):
+        SurvivalFollowUp.objects.create(
+            observation=self.observation, status=self.dead,
+            followed_up_on=date(2026, 1, 21), death_date=date(2026, 1, 20),
+        )
+        result = calculate_pfs(self.course)
+        self.assertEqual((result["event"], result["duration_days"]), ("death", 19))
+
+    def test_pfs_is_censored_at_last_follow_up(self):
+        SurvivalFollowUp.objects.create(observation=self.observation, status=self.alive, followed_up_on=date(2026, 1, 25))
+        result = calculate_pfs(self.course)
+        self.assertIsNone(result["event"])
+        self.assertEqual((result["censored_on"], result["duration_days"]), (date(2026, 1, 25), 24))
+
+    def test_os_death_event(self):
+        SurvivalFollowUp.objects.create(
+            observation=self.observation, status=self.dead,
+            followed_up_on=date(2026, 1, 21), death_date=date(2026, 1, 20),
+        )
+        result = calculate_os(self.observation, date(2026, 1, 1))
+        self.assertEqual((result["event"], result["duration_days"]), ("death", 19))
+
+    def test_os_is_censored_at_last_follow_up(self):
+        SurvivalFollowUp.objects.create(observation=self.observation, status=self.alive, followed_up_on=date(2026, 1, 25))
+        result = calculate_os(self.observation, date(2026, 1, 1))
+        self.assertIsNone(result["event"])
+        self.assertEqual((result["censored_on"], result["duration_days"]), (date(2026, 1, 25), 24))

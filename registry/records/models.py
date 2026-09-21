@@ -1274,8 +1274,15 @@ class DiseaseProgressionRecord(models.Model):
 
     def clean(self):
         super().clean()
+        errors = {}
         if self.treatment_course and self.treatment_course.observation.patient_id != self.observation.patient_id:
-            raise ValidationError({"observation": "The progression observation and treatment course must belong to the same patient."})
+            errors["observation"] = "The progression observation and treatment course must belong to the same patient."
+        if self.status.code == "progressed" and not self.progression_date:
+            errors["progression_date"] = "A progression date is required when status is progressed."
+        if self.progression_date and self.progression_date > self.assessed_on:
+            errors["progression_date"] = "The progression date cannot exceed the assessment date."
+        if errors:
+            raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -1299,6 +1306,22 @@ class SurvivalFollowUp(models.Model):
 
     def __str__(self):
         return f"{self.status} - {self.followed_up_on}"
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.status.code == "dead" and not self.death_date:
+            errors["death_date"] = "A death date is required when status is dead."
+        if self.status.code == "alive" and self.death_date:
+            errors["death_date"] = "An alive follow-up cannot contain a death date."
+        if self.death_date and self.death_date > self.followed_up_on:
+            errors["death_date"] = "The death date cannot exceed the follow-up date."
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 class SurgeryRecord(models.Model):
     class Status(models.TextChoices):

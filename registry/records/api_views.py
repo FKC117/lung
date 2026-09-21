@@ -8,7 +8,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, DiseaseProgressionRecord, Histopathology, IHCResult, IRECISTAssessment, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalResponseAssessment, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, RECIST11Assessment, SurvivalFollowUp, TreatmentAdministration, TreatmentCourse
-from .serializers import TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_assessment_serializer, build_record_serializer
+from .serializers import TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_assessment_serializer, build_outcome_serializer, build_record_serializer
 from .services.molecular import finalize_molecular_test
 
 
@@ -90,12 +90,12 @@ class PathologicalResponseAssessmentViewSet(RecordModelViewSet):
 
 class DiseaseProgressionRecordViewSet(RecordModelViewSet):
     queryset = DiseaseProgressionRecord.objects.select_related("observation__patient", "treatment_course", "status", "estimation_method").prefetch_related("progression_sites").all()
-    serializer_class = build_record_serializer(DiseaseProgressionRecord)
+    serializer_class = build_outcome_serializer(DiseaseProgressionRecord)
 
 
 class SurvivalFollowUpViewSet(RecordModelViewSet):
     queryset = SurvivalFollowUp.objects.select_related("observation__patient", "status").all()
-    serializer_class = build_record_serializer(SurvivalFollowUp)
+    serializer_class = build_outcome_serializer(SurvivalFollowUp)
 
 
 class IHCResultViewSet(RecordModelViewSet):

@@ -52,6 +52,39 @@ def build_assessment_serializer(model):
     return type(f"{model.__name__}Serializer", (AssessmentSerializerBase,), {"Meta": meta})
 
 
+class OutcomeSerializerBase(RecordSerializerBase):
+    def validate(self, attrs):
+        status_value = attrs.get("status", getattr(self.instance, "status", None))
+        errors = {}
+
+        if "progression_date" in self.fields:
+            assessed_on = attrs.get("assessed_on", getattr(self.instance, "assessed_on", None))
+            progression_date = attrs.get("progression_date", getattr(self.instance, "progression_date", None))
+            if status_value and status_value.code == "progressed" and not progression_date:
+                errors["progression_date"] = "A progression date is required when status is progressed."
+            if progression_date and assessed_on and progression_date > assessed_on:
+                errors["progression_date"] = "The progression date cannot exceed the assessment date."
+
+        if "death_date" in self.fields:
+            followed_up_on = attrs.get("followed_up_on", getattr(self.instance, "followed_up_on", None))
+            death_date = attrs.get("death_date", getattr(self.instance, "death_date", None))
+            if status_value and status_value.code == "dead" and not death_date:
+                errors["death_date"] = "A death date is required when status is dead."
+            if status_value and status_value.code == "alive" and death_date:
+                errors["death_date"] = "An alive follow-up cannot contain a death date."
+            if death_date and followed_up_on and death_date > followed_up_on:
+                errors["death_date"] = "The death date cannot exceed the follow-up date."
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+
+def build_outcome_serializer(model):
+    meta = type("Meta", (), {"model": model, "fields": "__all__"})
+    return type(f"{model.__name__}Serializer", (OutcomeSerializerBase,), {"Meta": meta})
+
+
 class TreatmentCourseSerializer(RecordSerializerBase):
     class Meta:
         model = TreatmentCourse
