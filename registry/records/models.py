@@ -1050,6 +1050,15 @@ class TreatmentCourse(models.Model):
     def __str__(self):
         return f"{self.protocol} - {self.observation}"
 
+    def clean(self):
+        super().clean()
+        if self.started_on and self.ended_on and self.ended_on < self.started_on:
+            raise ValidationError({"ended_on": "The end date cannot precede the start date."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
 
 class TreatmentAdministration(models.Model):
     class Status(models.TextChoices):
@@ -1116,5 +1125,224 @@ class TreatmentAdministration(models.Model):
         cycle = f"Cycle {self.cycle_number}" if self.cycle_number else "Treatment"
         return f"{self.drug} - {cycle}"
 
+    def clean(self):
+        super().clean()
+        errors = {}
+        course = self.treatment_course
 
+        if course.observation.patient_id != self.observation.patient_id:
+            errors["observation"] = "The administration observation must belong to the course patient."
 
+        if not course.protocol.drugs.filter(pk=self.drug.pk).exists():
+            errors["drug"] = "The drug must belong to the treatment course protocol."
+
+        if (
+            self.administered_on
+            and course.started_on
+            and self.administered_on < course.started_on
+        ):
+            errors["administered_on"] = "The administration date cannot precede the course start date."
+
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+class SurgeryRecord(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = "planned", "Planned"
+        PERFORMED = "performed", "Performed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="surgeries",
+    )
+    modality = models.ForeignKey(
+        SurgeryModality,
+        on_delete=models.PROTECT,
+        related_name="surgery_records",
+    )
+    laterality = models.ForeignKey(
+        SurgeryLaterality,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="surgery_records",
+    )
+
+    surgery_date = models.DateField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PLANNED,
+    )
+
+    procedure_details = models.TextField(blank=True)
+    operative_findings = models.TextField(blank=True)
+    complications = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-surgery_date", "-id")
+        indexes = [
+            models.Index(
+                fields=["observation", "surgery_date"],
+                name="surgery_obs_date_idx",
+            ),
+            models.Index(
+                fields=["modality", "surgery_date"],
+                name="surgery_modality_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.modality} - {self.observation}"
+
+class RadiotherapyCourse(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = "planned", "Planned"
+        ACTIVE = "active", "Active"
+        COMPLETED = "completed", "Completed"
+        STOPPED = "stopped", "Stopped"
+        CANCELLED = "cancelled", "Cancelled"
+
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="radiotherapy_courses",
+    )
+    site = models.ForeignKey(
+        RadiotherapySite,
+        on_delete=models.PROTECT,
+        related_name="radiotherapy_courses",
+    )
+    intent = models.ForeignKey(
+        RadiotherapyIntent,
+        on_delete=models.PROTECT,
+        related_name="radiotherapy_courses",
+    )
+    modality = models.ForeignKey(
+        RadiotherapyModality,
+        on_delete=models.PROTECT,
+        related_name="radiotherapy_courses",
+    )
+
+    started_on = models.DateField(null=True, blank=True)
+    ended_on = models.DateField(null=True, blank=True)
+
+    dose_per_fraction_cgy = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    planned_fractions = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+    )
+    completed_fractions = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+    )
+
+    planned_total_dose_cgy = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    delivered_total_dose_cgy = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        editable=False,
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PLANNED,
+    )
+
+    reason_for_stopping = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-started_on", "-id")
+        indexes = [
+            models.Index(
+                fields=["observation", "started_on"],
+                name="radio_course_obs_idx",
+            ),
+            models.Index(
+                fields=["site", "intent"],
+                name="radio_site_intent_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+
+        if (
+            self.started_on
+            and self.ended_on
+            and self.ended_on < self.started_on
+        ):
+            raise ValidationError(
+                {"ended_on": "End date cannot precede start date."}
+            )
+
+        if (
+            self.planned_fractions is not None
+            and self.completed_fractions is not None
+            and self.completed_fractions > self.planned_fractions
+        ):
+            raise ValidationError(
+                {
+                    "completed_fractions":
+                    "Completed fractions cannot exceed planned fractions."
+                }
+            )
+
+    def save(self, *args, **kwargs):
+        if (
+            self.dose_per_fraction_cgy is not None
+            and self.planned_fractions is not None
+        ):
+            self.planned_total_dose_cgy = (
+                self.dose_per_fraction_cgy
+                * self.planned_fractions
+            )
+        else:
+            self.planned_total_dose_cgy = None
+
+        if (
+            self.dose_per_fraction_cgy is not None
+            and self.completed_fractions is not None
+        ):
+            self.delivered_total_dose_cgy = (
+                self.dose_per_fraction_cgy
+                * self.completed_fractions
+            )
+        else:
+            self.delivered_total_dose_cgy = None
+
+        update_fields = kwargs.get("update_fields")
+
+        if update_fields is not None:
+            kwargs["update_fields"] = set(update_fields) | {
+                "planned_total_dose_cgy",
+                "delivered_total_dose_cgy",
+            }
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.site} - {self.observation}"

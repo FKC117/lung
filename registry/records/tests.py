@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from datetime import date
 from rest_framework.test import APIClient
 
 from options.models import (
@@ -11,8 +12,12 @@ from options.models import (
     MolecularPathologyGene,
     MolecularPathologyExon,
     MolecularPathologyResult,
+    TreatmentDrug,
+    TreatmentModality,
+    TreatmentProtocol,
+    TreatmentProtocolDrug,
 )
-from records.models import ClinicalObservation, MolecularTest, MolecularTestResult, Patient
+from records.models import ClinicalObservation, MolecularTest, MolecularTestResult, Patient, TreatmentAdministration, TreatmentCourse
 from records.services.molecular import finalize_molecular_test
 
 
@@ -135,3 +140,47 @@ class MolecularFinalizationTests(TestCase):
 
         with self.assertRaisesMessage(ValidationError, "must match its panel target"):
             finalize_molecular_test(self.molecular_test.pk)
+
+
+class TreatmentValidationTests(TestCase):
+    def setUp(self):
+        patient = Patient.objects.create(registration_no="REG-T1", patient_id="PAT-T1", name="Treatment Patient")
+        other_patient = Patient.objects.create(registration_no="REG-T2", patient_id="PAT-T2", name="Other Patient")
+        self.observation = ClinicalObservation.objects.create(patient=patient)
+        self.other_observation = ClinicalObservation.objects.create(patient=other_patient)
+        modality = TreatmentModality.objects.create(name="Systemic therapy")
+        self.protocol = TreatmentProtocol.objects.create(name="Protocol A")
+        self.protocol_drug = TreatmentDrug.objects.create(name="Drug A")
+        self.other_drug = TreatmentDrug.objects.create(name="Drug B")
+        TreatmentProtocolDrug.objects.create(protocol=self.protocol, drug=self.protocol_drug)
+        self.course = TreatmentCourse.objects.create(
+            observation=self.observation,
+            modality=modality,
+            protocol=self.protocol,
+            started_on=date(2026, 1, 10),
+        )
+
+    def test_course_end_cannot_precede_start(self):
+        course = TreatmentCourse(
+            observation=self.observation,
+            modality=self.course.modality,
+            protocol=self.protocol,
+            started_on=date(2026, 1, 10),
+            ended_on=date(2026, 1, 9),
+        )
+        with self.assertRaisesMessage(ValidationError, "cannot precede"):
+            course.full_clean()
+
+    def test_administration_requires_protocol_drug_same_patient_and_valid_date(self):
+        administration = TreatmentAdministration(
+            treatment_course=self.course,
+            observation=self.other_observation,
+            drug=self.other_drug,
+            administered_on=date(2026, 1, 9),
+        )
+        with self.assertRaises(ValidationError) as error:
+            administration.full_clean()
+
+        self.assertIn("observation", error.exception.message_dict)
+        self.assertIn("drug", error.exception.message_dict)
+        self.assertIn("administered_on", error.exception.message_dict)

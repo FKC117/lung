@@ -8,7 +8,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, Histopathology, IHCResult, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, TreatmentAdministration, TreatmentCourse
-from .serializers import build_record_serializer
+from .serializers import TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_record_serializer
 from .services.molecular import finalize_molecular_test
 
 
@@ -65,12 +65,12 @@ class CancerMarkerResultViewSet(RecordModelViewSet):
 
 class TreatmentCourseViewSet(RecordModelViewSet):
     queryset = TreatmentCourse.objects.select_related("observation__patient", "modality", "line_of_treatment", "protocol").all()
-    serializer_class = build_record_serializer(TreatmentCourse)
+    serializer_class = TreatmentCourseSerializer
 
 
 class TreatmentAdministrationViewSet(RecordModelViewSet):
     queryset = TreatmentAdministration.objects.select_related("treatment_course", "observation__patient", "drug").all()
-    serializer_class = build_record_serializer(TreatmentAdministration)
+    serializer_class = TreatmentAdministrationSerializer
 
 
 class IHCResultViewSet(RecordModelViewSet):
