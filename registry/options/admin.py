@@ -64,8 +64,9 @@ from .models import (
 
     TreatmentModality,
     LineOfTreatment,
+    TreatmentDrug,
     TreatmentProtocol,
-    TreatmentProtocolCycleNo,
+    TreatmentProtocolDrug,
 
     RECISTTargetLesion,
     RECISTNonTargetLesion,
@@ -154,6 +155,7 @@ lookup_models = [
     RadiotherapyModality,
     TreatmentModality,
     LineOfTreatment,
+    TreatmentDrug,
     TreatmentProtocol,
     RECISTTargetLesion,
     RECISTNonTargetLesion,
@@ -200,34 +202,6 @@ class DoctorAdmin(ImportExportModelAdmin):
     list_select_related = ("center",)
     ordering = ("name",)
 
-
-# @admin.register(DoctorDegree)
-# class DoctorDegreeAdmin(ImportExportModelAdmin):
-#     list_display = ("id", "legacy_id", "doctor", "degree")
-#     list_filter = ("degree",)
-#     search_fields = ("doctor__name", "degree")
-#     list_select_related = ("doctor",)
-
-
-# @admin.register(DoctorRecognitionRecord)
-# class DoctorRecognitionRecordAdmin(ImportExportModelAdmin):
-#     list_display = ("id", "legacy_id", "group", "value")
-#     list_filter = ("group",)
-#     search_fields = ("group", "value")
-
-
-# @admin.register(OptionProvenance)
-# class OptionProvenanceAdmin(ImportExportModelAdmin):
-#     list_display = ("content_type", "object_id", "legacy_id", "is_active")
-#     list_filter = ("content_type", "is_active")
-#     search_fields = ("legacy_id",)
-
-
-# @admin.register(OptionAlias)
-# class OptionAliasAdmin(ImportExportModelAdmin):
-#     list_display = ("content_type", "object_id", "alias", "is_active")
-#     list_filter = ("content_type", "is_active")
-#     search_fields = ("alias", "normalized_alias")
 
 
 @admin.register(Thana)
@@ -278,12 +252,16 @@ class MolecularPanelTargetAdmin(ImportExportModelAdmin):
     search_fields = ("panel_version__panel__name", "panel_version__version", "gene__name")
     list_select_related = ("panel_version__panel", "gene", "alteration_type")
 
-# @admin.register(CancerMarkerUnit)
-# class CancerMarkerUnitAdmin(ImportExportModelAdmin):
-#     list_display = ("id", "name", "marker")
-#     list_filter = ("marker",)
-#     search_fields = ("name", "marker__name")
-#     ordering = ("marker__name", "name")
+
+@admin.register(TreatmentProtocolDrug)
+class TreatmentProtocolDrugAdmin(ImportExportModelAdmin):
+    list_display = ("id", "protocol", "drug", "sequence")
+    list_filter = ("protocol", "drug")
+    search_fields = ("protocol__name", "drug__name")
+    list_select_related = ("protocol", "drug")
+    ordering = ("protocol__name", "sequence")
+
+
 
 @admin.register(RECIST11Assessment)
 class RECIST11AssessmentAdmin(ImportExportModelAdmin):
@@ -364,9 +342,3 @@ class PathologicalResponseAssessmentAdmin(ImportExportModelAdmin):
 
     ordering = ("id",)
 
-@admin.register(TreatmentProtocolCycleNo)
-class TreatmentProtocolCycleNoAdmin(ImportExportModelAdmin):
-    list_display = ("id", "cycle_no", "protocol")
-    list_filter = ("protocol",)
-    search_fields = ("cycle_no", "protocol__name")
-    ordering = ("protocol__name", "cycle_no")

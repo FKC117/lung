@@ -67,7 +67,9 @@ from options.models import (
     TreatmentModality,
     LineOfTreatment,
     TreatmentProtocol,
-    TreatmentProtocolCycleNo,
+    TreatmentDrug,
+    TreatmentProtocolDrug,
+    
 
     RECISTTargetLesion,
     RECISTNonTargetLesion,
@@ -937,16 +939,182 @@ class MolecularTestResult(models.Model):
             raise ValidationError("Results for a finalized molecular test cannot be deleted.")
         return super().delete(*args, **kwargs)
 
+class CancerMarkerResult(models.Model):
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="cancer_marker_results",
+    )
+    marker = models.ForeignKey(
+        CancerMarkerName,
+        on_delete=models.PROTECT,
+        related_name="results",
+    )
+    tested_on = models.DateField(
+        null=True,
+        blank=True,
+    )
+    value = models.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        null=True,
+        blank=True,
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-tested_on", "-id")
+        indexes = [
+            models.Index(
+                fields=["observation", "tested_on"],
+                name="cmarker_obs_date_idx",
+            ),
+            models.Index(
+                fields=["marker", "tested_on"],
+                name="cmarker_marker_date_idx",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["observation", "marker", "tested_on"],
+                name="unique_cmarker_obs_date",
+            ),
+        ]
+
+    def __str__(self):
+        unit = self.marker.unit
+        result = f"{self.marker}: {self.value}"
+
+        if unit:
+            result += f" {unit}"
+
+        return result
 
 
+class TreatmentCourse(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = "planned", "Planned"
+        ACTIVE = "active", "Active"
+        COMPLETED = "completed", "Completed"
+        STOPPED = "stopped", "Stopped"
+        HELD = "held", "Held"
+
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="treatment_courses",
+    )
+    modality = models.ForeignKey(
+        TreatmentModality,
+        on_delete=models.PROTECT,
+        related_name="treatment_courses",
+    )
+    line_of_treatment = models.ForeignKey(
+        LineOfTreatment,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="treatment_courses",
+    )
+    protocol = models.ForeignKey(
+        TreatmentProtocol,
+        on_delete=models.PROTECT,
+        related_name="treatment_courses",
+    )
+
+    started_on = models.DateField(null=True, blank=True)
+    ended_on = models.DateField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PLANNED,
+    )
+
+    reason_for_stopping = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ("-started_on", "-id")
+        indexes = [
+            models.Index(
+                fields=["observation", "started_on"],
+                name="treatment_course_obs_idx",
+            ),
+            models.Index(
+                fields=["protocol", "status"],
+                name="treatment_protocol_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.protocol} - {self.observation}"
 
 
+class TreatmentAdministration(models.Model):
+    class Status(models.TextChoices):
+        PLANNED = "planned", "Planned"
+        GIVEN = "given", "Given"
+        DELAYED = "delayed", "Delayed"
+        HELD = "held", "Held"
+        CANCELLED = "cancelled", "Cancelled"
 
+    treatment_course = models.ForeignKey(
+        TreatmentCourse,
+        on_delete=models.CASCADE,
+        related_name="administrations",
+    )
+    observation = models.ForeignKey(
+        ClinicalObservation,
+        on_delete=models.CASCADE,
+        related_name="treatment_administrations",
+    )
+    drug = models.ForeignKey(
+        TreatmentDrug,
+        on_delete=models.PROTECT,
+        related_name="administrations",
+    )
 
+    administered_on = models.DateField(null=True, blank=True)
+    cycle_number = models.PositiveSmallIntegerField(null=True, blank=True)
+    day_number = models.PositiveSmallIntegerField(null=True, blank=True)
 
+    dose = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    dose_unit = models.CharField(max_length=30, blank=True)
 
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PLANNED,
+    )
 
+    notes = models.TextField(blank=True)
 
+    class Meta:
+        ordering = ("-administered_on", "-id")
+        indexes = [
+            models.Index(
+                fields=["treatment_course", "cycle_number"],
+                name="treatment_cycle_idx",
+            ),
+            models.Index(
+                fields=["observation", "administered_on"],
+                name="treatment_admin_obs_idx",
+            ),
+            models.Index(
+                fields=["drug", "administered_on"],
+                name="treatment_drug_date_idx",
+            ),
+        ]
+
+    def __str__(self):
+        cycle = f"Cycle {self.cycle_number}" if self.cycle_number else "Treatment"
+        return f"{self.drug} - {cycle}"
 
 
 

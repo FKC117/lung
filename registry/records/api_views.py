@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from .models import ClinicalObservation, ClinicalTNMStaging, Diagnosis, Histopathology, IHCResult, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity
+from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, Histopathology, IHCResult, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, TreatmentAdministration, TreatmentCourse
 from .serializers import build_record_serializer
 from .services.molecular import finalize_molecular_test
 
@@ -56,6 +56,21 @@ class MetastaticSiteRecordViewSet(RecordModelViewSet):
 class HistopathologyViewSet(RecordModelViewSet):
     queryset = Histopathology.objects.select_related("observation__patient", "histopathology_details", "histopathology_type", "histopathology_site", "histopathology_grade").all()
     serializer_class = build_record_serializer(Histopathology)
+
+
+class CancerMarkerResultViewSet(RecordModelViewSet):
+    queryset = CancerMarkerResult.objects.select_related("observation__patient", "marker").all()
+    serializer_class = build_record_serializer(CancerMarkerResult)
+
+
+class TreatmentCourseViewSet(RecordModelViewSet):
+    queryset = TreatmentCourse.objects.select_related("observation__patient", "modality", "line_of_treatment", "protocol").all()
+    serializer_class = build_record_serializer(TreatmentCourse)
+
+
+class TreatmentAdministrationViewSet(RecordModelViewSet):
+    queryset = TreatmentAdministration.objects.select_related("treatment_course", "observation__patient", "drug").all()
+    serializer_class = build_record_serializer(TreatmentAdministration)
 
 
 class IHCResultViewSet(RecordModelViewSet):

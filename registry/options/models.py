@@ -475,7 +475,6 @@ class MolecularClinicalSignificance(models.Model):
     def __str__(self):
         return self.name
 
-
 class MolecularPanel(models.Model):
     name = models.CharField(max_length=191, unique=True)
     manufacturer = models.CharField(max_length=191, blank=True)
@@ -484,7 +483,6 @@ class MolecularPanel(models.Model):
 
     def __str__(self):
         return self.name
-
 
 class MolecularPanelVersion(models.Model):
     class ReportingPolicy(models.TextChoices):
@@ -530,7 +528,6 @@ class MolecularPanelVersion(models.Model):
     def __str__(self):
         return f"{self.panel} - {self.version}"
 
-
 class MolecularPanelTarget(models.Model):
     panel_version = models.ForeignKey(
         MolecularPanelVersion,
@@ -572,28 +569,12 @@ class MolecularPanelTarget(models.Model):
 
 
 
-
 class CancerMarkerName(models.Model):
     name = models.CharField(max_length=191, unique=True)
     unit = models.CharField(max_length=191, blank=True)
 
     def __str__(self):
         return self.name
-
-
-# class CancerMarkerUnit(models.Model):
-#     marker = models.ForeignKey(
-#         CancerMarkerName,
-#         on_delete=models.CASCADE,
-#         related_name="units"
-#     )
-#     name = models.CharField(max_length=191)
-
-#     class Meta:
-#         unique_together = ("marker", "name")
-
-#     def __str__(self):
-#         return f"{self.marker.name} - {self.name}"
 
 
 # Treatment Models Start Here
@@ -652,30 +633,52 @@ class LineOfTreatment(models.Model):
     def __str__(self):
         return self.name
 
-class TreatmentProtocol(models.Model):
+class TreatmentDrug(models.Model):
     name = models.CharField(max_length=191, unique=True)
 
     def __str__(self):
         return self.name
 
-class TreatmentProtocolCycleNo(models.Model):
+
+class TreatmentProtocol(models.Model):
+    name = models.CharField(max_length=191, unique=True)
+    drugs = models.ManyToManyField(
+        TreatmentDrug,
+        through="TreatmentProtocolDrug",
+        related_name="protocols",
+    )
+
+    def __str__(self):
+        return self.name
+
+
+class TreatmentProtocolDrug(models.Model):
     protocol = models.ForeignKey(
         TreatmentProtocol,
         on_delete=models.CASCADE,
-        related_name="cycles"
+        related_name="protocol_drugs",
     )
-    cycle_no = models.PositiveIntegerField()
+    drug = models.ForeignKey(
+        TreatmentDrug,
+        on_delete=models.PROTECT,
+        related_name="protocol_drugs",
+    )
+    sequence = models.PositiveSmallIntegerField(default=1)
 
     class Meta:
-        unique_together = ("protocol", "cycle_no")
-
+        ordering = ("sequence", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=["protocol", "drug"],
+                name="unique_drug_per_protocol",
+            )
+        ]
     def __str__(self):
-        return f"{self.protocol.name} - Cycle {self.cycle_no}"
+        return f"{self.protocol} - {self.drug}"
+    
 # Treatment Models Ends Here
 
 #Outcome models starts here
-from django.db import models
-
 
 # =========================================================
 # RECIST 1.1 LOOKUP MODELS

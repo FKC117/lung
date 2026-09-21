@@ -7,6 +7,7 @@ from .models import (
     Histopathology,
     IHCResult,
     ClinicalTNMStaging,
+    CancerMarkerResult,
     PathologicalTNMStaging,
     PathologicalStagingResult,
     MolecularTest,
@@ -15,6 +16,8 @@ from .models import (
     Patient,
     PatientAnthropometry,
     PatientComorbidity,
+    TreatmentAdministration,
+    TreatmentCourse,
 )
 
 
@@ -73,6 +76,30 @@ class HistopathologyAdmin(ImportExportModelAdmin):
     list_filter = ("histopathology_type", "histopathology_grade", "histopathology_site")
     search_fields = ("observation__patient__patient_id", "observation__patient__name", "report_summary")
     list_select_related = ("observation__patient", "histopathology_type", "histopathology_grade", "histopathology_site")
+
+
+@admin.register(CancerMarkerResult)
+class CancerMarkerResultAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "marker", "value", "tested_on")
+    list_filter = ("marker",)
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "marker__name")
+    list_select_related = ("observation__patient", "marker")
+
+
+@admin.register(TreatmentCourse)
+class TreatmentCourseAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "modality", "line_of_treatment", "protocol", "started_on", "status")
+    list_filter = ("status", "modality", "line_of_treatment", "protocol")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "protocol__name")
+    list_select_related = ("observation__patient", "modality", "line_of_treatment", "protocol")
+
+
+@admin.register(TreatmentAdministration)
+class TreatmentAdministrationAdmin(ImportExportModelAdmin):
+    list_display = ("id", "treatment_course", "observation", "drug", "cycle_number", "day_number", "administered_on", "status")
+    list_filter = ("status", "drug")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "drug__name")
+    list_select_related = ("treatment_course", "observation__patient", "drug")
 
 
 @admin.register(IHCResult)
