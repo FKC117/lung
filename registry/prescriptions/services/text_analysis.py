@@ -4,6 +4,7 @@ from datetime import date
 
 from django.conf import settings
 
+from prescriptions.services.chronology import validate_chronology
 from prescriptions.services.option_resolver import resolve_medications
 
 
@@ -132,7 +133,7 @@ def analyze_text(pages):
     warnings = [item["warning"] for item in dates if item.get("warning")]
     if resolved:
         warnings.append("Chronology orders explicit document dates only; it does not infer treatment, administration, diagnosis, progression, or event meaning.")
-    return {
+    result = {
         "patient": {"identifiers": identifiers},
         "observations": [],
         "prescriber_candidates": doctors,
@@ -142,3 +143,4 @@ def analyze_text(pages):
         "unresolved_items": [],
         "warnings": warnings + (["Medication lines describe prescriptions only; they do not prove drug administration."] if medications else []),
     }
+    return validate_chronology(result)

@@ -106,3 +106,37 @@ class PrescriptionDrugAlias(models.Model):
 
     def __str__(self):
         return f"{self.alias} → {self.drug}"
+
+
+class PrescriptionReview(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        IN_REVIEW = "in_review", "In review"
+        APPROVED = "approved", "Approved for publishing"
+        REJECTED = "rejected", "Rejected"
+
+    document = models.OneToOneField(PrescriptionDocument, on_delete=models.CASCADE, related_name="review")
+    selected_patient = models.ForeignKey("records.Patient", on_delete=models.SET_NULL, null=True, blank=True, related_name="prescription_reviews")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    reviewed_data = models.JSONField(default=dict, blank=True)
+    notes = models.TextField(blank=True)
+    assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_prescription_reviews")
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="completed_prescription_reviews")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-updated_at",)
+
+
+class PrescriptionReviewChange(models.Model):
+    review = models.ForeignKey(PrescriptionReview, on_delete=models.CASCADE, related_name="changes")
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    field_path = models.CharField(max_length=255)
+    previous_value = models.JSONField(null=True, blank=True)
+    new_value = models.JSONField(null=True, blank=True)
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-changed_at", "-id")

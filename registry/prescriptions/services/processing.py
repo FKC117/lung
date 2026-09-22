@@ -93,6 +93,15 @@ def process_document(document):
         run.save(update_fields=["prompt_version", "structured_data", "status", "completed_at"])
         for warning in result["warnings"]:
             ExtractionIssue.objects.create(document=document, extraction_run=run, code="extraction_warning", severity=ExtractionIssue.Severity.WARNING, message=str(warning))
+        for issue in result.get("validation", {}).get("issues", []):
+            ExtractionIssue.objects.create(
+                document=document,
+                extraction_run=run,
+                code=issue["code"],
+                severity=issue["severity"],
+                message=issue["message"],
+                page_number=issue.get("page"),
+            )
         document.page_count = len(pages)
         document.status = PrescriptionDocument.Status.READY_FOR_REVIEW
         document.processed_at = timezone.now()
