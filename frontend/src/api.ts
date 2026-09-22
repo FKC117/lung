@@ -1619,16 +1619,6 @@ function pick(source: RawRecord, keys: string[]) {
  * but persist each section through the current records endpoints.
  */
 async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean) {
-  // LEGACY_UI: These models exist in Django, but the current backend does not
-  // publish CRUD routes for them. Do not make up client-side endpoint names.
-  const hasSurgery = (payload.surgeries ?? []).some((row) => Object.values(row).some(defined));
-  const hasRadiotherapy = (payload.radiotherapy_schedules ?? []).some((row) => Object.values(row).some(defined));
-  if (hasSurgery || hasRadiotherapy) {
-    throw new ApiError(
-      "Surgery and radiotherapy remain legacy form sections: the current backend API does not expose routes for them.",
-      422,
-    );
-  }
   const patientInput = payload.patient ?? {};
   const observationInput = payload.observation ?? {};
   let patient: RawRecord;
@@ -1713,6 +1703,7 @@ async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean
         }),
       ),
     );
+    if (!draft) await request<RawRecord>(`/api/records/molecular-tests/${test.id}/finalize/`, { method: "POST" });
     await Promise.all(
       ((panelRecord.staging_results as RawRecord[] | undefined) ?? []).map((result) =>
         post("/api/records/pathological-staging-results/", {
@@ -1750,10 +1741,36 @@ async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean
       await Promise.all(((row.administrations as RawRecord[] | undefined) ?? []).map((administration) => post("/api/records/treatment-administrations/", { treatment_course: course.id, observation: observationId, ...administration })));
       await Promise.all(((row.recist11_assessments as RawRecord[] | undefined) ?? []).map((assessment) => post("/api/records/recist11-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: "on_treatment", target_lesion: assessment.target_lesion, non_target_lesion: assessment.non_target_lesion, new_lesion: assessment.new_lesion, overall_response: assessment.response_result, estimation_method: assessment.estimation_method })));
       await Promise.all(((row.irecist_assessments as RawRecord[] | undefined) ?? []).map((assessment) => post("/api/records/irecist-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: "on_treatment", target_lesion: assessment.target_lesion, non_target_lesion: assessment.non_target_lesion, new_lesion: assessment.new_lesion, overall_response: assessment.response_result, estimation_method: assessment.estimation_method })));
+      await Promise.all(((row.pathological_response_records as RawRecord[] | undefined) ?? []).filter((assessment) => Boolean(assessment.assessed_at)).map((assessment) => post("/api/records/pathological-response-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: "post_treatment", response_category: assessment.response_category, residual_viable_tumor_percentage: assessment.residual_viable_tumor_percentage, tumor_regression_grade: assessment.tumor_regression_grade, estimation_method: assessment.estimation_method })));
     }
   }
   await Promise.all((payload.progression_records ?? []).map((record) => post("/api/records/disease-progression-records/", { observation: observationId, ...record })));
   await Promise.all((payload.survival_followups ?? []).map((record) => post("/api/records/survival-followups/", { observation: observationId, ...record })));
+  await Promise.all((payload.surgeries ?? []).map((surgery) => post("/api/records/surgeries/", {
+    observation: observationId,
+    modality: surgery.surgery_modality,
+    laterality: Array.isArray(surgery.lateralities) ? surgery.lateralities[0] : undefined,
+    surgery_date: surgery.surgery_date,
+    status: surgery.status,
+    procedure_details: surgery.procedure_details,
+    operative_findings: surgery.operative_findings,
+    complications: surgery.complications,
+    notes: surgery.notes,
+  })));
+  await Promise.all((payload.radiotherapy_schedules ?? []).map((course) => post("/api/records/radiotherapy-courses/", {
+    observation: observationId,
+    site: Array.isArray(course.sites) ? course.sites[0] : undefined,
+    intent: course.radiotherapy_intent,
+    modality: Array.isArray(course.modalities) ? course.modalities[0] : undefined,
+    started_on: course.started_at,
+    ended_on: course.ended_at,
+    dose_per_fraction_cgy: course.fraction_dose,
+    planned_fractions: course.fraction_count,
+    completed_fractions: course.completed_fractions,
+    status: course.status,
+    reason_for_stopping: course.reason_for_stopping,
+    notes: course.notes,
+  })));
   const result = { patient_id: patientId, patient_identifier: String(patient.patient_id), observation_id: observationId };
   return draft ? { ...result, status: "draft" as const } : result;
 }

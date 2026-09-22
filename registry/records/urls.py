@@ -20,6 +20,8 @@ from .api_views import (
     PatientComorbidityViewSet,
     PatientViewSet,
     RECIST11AssessmentViewSet,
+    RadiotherapyCourseViewSet,
+    SurgeryRecordViewSet,
     SurvivalFollowUpViewSet,
     TreatmentAdministrationViewSet,
     TreatmentCourseViewSet,
@@ -36,6 +38,8 @@ router.register("records/histopathologies", HistopathologyViewSet, basename="his
 router.register("records/cancer-marker-results", CancerMarkerResultViewSet, basename="cancer-marker-result")
 router.register("records/treatment-courses", TreatmentCourseViewSet, basename="treatment-course")
 router.register("records/treatment-administrations", TreatmentAdministrationViewSet, basename="treatment-administration")
+router.register("records/surgeries", SurgeryRecordViewSet, basename="surgery-record")
+router.register("records/radiotherapy-courses", RadiotherapyCourseViewSet, basename="radiotherapy-course")
 router.register("records/recist11-assessments", RECIST11AssessmentViewSet, basename="recist11-assessment")
 router.register("records/irecist-assessments", IRECISTAssessmentViewSet, basename="irecist-assessment")
 router.register("records/pathological-response-assessments", PathologicalResponseAssessmentViewSet, basename="pathological-response-assessment")

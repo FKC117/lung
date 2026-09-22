@@ -20,6 +20,8 @@ from .models import (
     Patient,
     PatientAnthropometry,
     PatientComorbidity,
+    RadiotherapyCourse,
+    SurgeryRecord,
     TreatmentAdministration,
     TreatmentCourse,
     SurvivalFollowUp,
@@ -105,6 +107,22 @@ class TreatmentAdministrationAdmin(ImportExportModelAdmin):
     list_filter = ("status", "drug")
     search_fields = ("observation__patient__patient_id", "observation__patient__name", "drug__name")
     list_select_related = ("treatment_course", "observation__patient", "drug")
+
+
+@admin.register(SurgeryRecord)
+class SurgeryRecordAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "modality", "laterality", "surgery_date", "status")
+    list_filter = ("status", "modality", "laterality")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "procedure_details")
+    list_select_related = ("observation__patient", "modality", "laterality")
+
+
+@admin.register(RadiotherapyCourse)
+class RadiotherapyCourseAdmin(ImportExportModelAdmin):
+    list_display = ("id", "observation", "site", "intent", "modality", "started_on", "ended_on", "status")
+    list_filter = ("status", "site", "intent", "modality")
+    search_fields = ("observation__patient__patient_id", "observation__patient__name", "notes")
+    list_select_related = ("observation__patient", "site", "intent", "modality")
 
 
 @admin.register(DiseaseProgressionRecord)

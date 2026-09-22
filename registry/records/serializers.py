@@ -2,7 +2,7 @@
 
 from rest_framework import serializers
 
-from .models import TreatmentAdministration, TreatmentCourse
+from .models import RadiotherapyCourse, TreatmentAdministration, TreatmentCourse
 
 
 class RecordSerializerBase(serializers.ModelSerializer):
@@ -124,6 +124,38 @@ class TreatmentAdministrationSerializer(RecordSerializerBase):
             errors["drug"] = "The drug must belong to the treatment course protocol."
         if course and administered_on and course.started_on and administered_on < course.started_on:
             errors["administered_on"] = "The administration date cannot precede the course start date."
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
+
+class RadiotherapyCourseSerializer(RecordSerializerBase):
+    """Expose radiotherapy course validation as clean API 400 responses."""
+
+    class Meta:
+        model = RadiotherapyCourse
+        fields = "__all__"
+        read_only_fields = ("planned_total_dose_cgy", "delivered_total_dose_cgy")
+
+    def validate(self, attrs):
+        started_on = attrs.get("started_on", getattr(self.instance, "started_on", None))
+        ended_on = attrs.get("ended_on", getattr(self.instance, "ended_on", None))
+        planned_fractions = attrs.get(
+            "planned_fractions", getattr(self.instance, "planned_fractions", None)
+        )
+        completed_fractions = attrs.get(
+            "completed_fractions", getattr(self.instance, "completed_fractions", None)
+        )
+        errors = {}
+
+        if started_on and ended_on and ended_on < started_on:
+            errors["ended_on"] = "End date cannot precede start date."
+        if (
+            planned_fractions is not None
+            and completed_fractions is not None
+            and completed_fractions > planned_fractions
+        ):
+            errors["completed_fractions"] = "Completed fractions cannot exceed planned fractions."
         if errors:
             raise serializers.ValidationError(errors)
         return attrs

@@ -111,6 +111,9 @@ type ResponseRow = {
   response_result: string;
   progression_sites: string[];
   estimation_method: string;
+  response_category: string;
+  residual_viable_tumor_percentage: string;
+  tumor_regression_grade: string;
 };
 type ProtocolBuilderRow = {
   protocol_type: "primary" | "followed_by";
@@ -252,6 +255,8 @@ const optionResourcesByStep: Record<number, string[]> = {
     "irecist-response-results",
     "progression-sites",
     "response-estimation-methods",
+    "pathological-response-categories",
+    "tumor-regression-grades",
     "surgery-modalities",
     "surgery-lateralities",
     "radiotherapy-sites",
@@ -337,6 +342,9 @@ const blankResponse = (): ResponseRow => ({
   response_result: "",
   progression_sites: [],
   estimation_method: "",
+  response_category: "",
+  residual_viable_tumor_percentage: "",
+  tumor_regression_grade: "",
 });
 const blankProtocolBuilder = (
   protocol_type: ProtocolBuilderRow["protocol_type"] = "primary",
@@ -1814,7 +1822,10 @@ export default function EntriesPatientEntryPage() {
         !row.target_lesion &&
         !row.non_target_lesion &&
         !row.new_lesion &&
-        !row.response_result
+        !row.response_result &&
+        !row.response_category &&
+        !row.residual_viable_tumor_percentage &&
+        !row.tumor_regression_grade
       )
         return [];
       return [
@@ -1826,6 +1837,9 @@ export default function EntriesPatientEntryPage() {
           response_result: toNumber(row.response_result),
           progression_sites: ids(row.progression_sites),
           estimation_method: toNumber(row.estimation_method),
+          response_category: toNumber(row.response_category),
+          residual_viable_tumor_percentage: toNumber(row.residual_viable_tumor_percentage),
+          tumor_regression_grade: toNumber(row.tumor_regression_grade),
         }),
       ];
     };
@@ -2096,6 +2110,11 @@ export default function EntriesPatientEntryPage() {
             surgery_modality: toNumber(row.surgery_modality),
             surgery_date: row.surgery_date,
             lateralities: ids(row.lateralities),
+            status: row.status,
+            procedure_details: row.procedure_details,
+            operative_findings: row.operative_findings,
+            complications: row.complications,
+            notes: row.notes,
           }),
         ),
       progression_records: progressionRecords
@@ -2137,6 +2156,10 @@ export default function EntriesPatientEntryPage() {
               row.fraction_dose,
               row.fraction_count,
             ),
+            completed_fractions: toNumber(row.completed_fractions),
+            status: row.status,
+            reason_for_stopping: row.reason_for_stopping,
+            notes: row.notes,
           }),
         ),
     };
@@ -3622,7 +3645,8 @@ export default function EntriesPatientEntryPage() {
                       />
                     </div>
                   </section>
-                  <section className="entry-outcome-card entry-span-full">
+                  {/* LEGACY_UI: superseded by the independent progression and survival forms below. */}
+                  <section className="entry-outcome-card entry-span-full" hidden aria-hidden="true">
                     <div className="entry-response-assessments-head">
                       <div>
                         <p className="eyebrow">Treatment outcomes</p>
@@ -3739,7 +3763,6 @@ export default function EntriesPatientEntryPage() {
                 <RemoveButton show={survivalFollowUps.length > 1} onClick={() => setSurvivalFollowUps(survivalFollowUps.filter((_, itemIndex) => itemIndex !== index))} />
               </div>)}
             </RepeatableSection>
-            {/* LEGACY_UI: current backend has no surgery-records route. */}
             <RepeatableSection
               title="Surgery"
               onAdd={() => setSurgeries([...surgeries, blankSurgery()])}
@@ -3808,6 +3831,11 @@ export default function EntriesPatientEntryPage() {
                         )
                       }
                     />
+                    <div className="entry-grid">
+                      <SelectField label="Response category" value={treatments[0]?.pathological_response.response_category ?? ""} options={getOptions("pathological-response-categories")} onChange={(value) => updateRow(setTreatments, 0, "pathological_response", { ...(treatments[0]?.pathological_response ?? blankResponse()), response_category: value })} />
+                      <TextField label="Residual viable tumour (%)" type="number" value={treatments[0]?.pathological_response.residual_viable_tumor_percentage ?? ""} onChange={(value) => updateRow(setTreatments, 0, "pathological_response", { ...(treatments[0]?.pathological_response ?? blankResponse()), residual_viable_tumor_percentage: value })} />
+                      <SelectField label="Tumour regression grade" value={treatments[0]?.pathological_response.tumor_regression_grade ?? ""} options={getOptions("tumor-regression-grades")} onChange={(value) => updateRow(setTreatments, 0, "pathological_response", { ...(treatments[0]?.pathological_response ?? blankResponse()), tumor_regression_grade: value })} />
+                    </div>
                   </section>
                   <RemoveButton
                     show={surgeries.length > 1}
@@ -3820,7 +3848,6 @@ export default function EntriesPatientEntryPage() {
                 </div>
               ))}
             </RepeatableSection>
-            {/* LEGACY_UI: current backend has no radiotherapy-courses route. */}
             <RepeatableSection
               title="Radiotherapy"
               onAdd={() =>

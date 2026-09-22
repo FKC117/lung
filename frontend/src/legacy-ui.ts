@@ -12,7 +12,7 @@ export const legacyUiInventory = {
     "/patients/:registryId/edit",
     "/entries/patients",
   ],
-  fieldsWithoutCurrentApiRoutes: ["surgery records", "radiotherapy courses"],
+  fieldsWithoutCurrentApiRoutes: [],
   fieldsNeedingCurrentModelMapping: [
     "molecular test results (alteration_type is required)",
     "RECIST and iRECIST assessments",

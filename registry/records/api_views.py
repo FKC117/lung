@@ -7,8 +7,8 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, DiseaseProgressionRecord, Histopathology, IHCResult, IRECISTAssessment, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalResponseAssessment, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, RECIST11Assessment, SurvivalFollowUp, TreatmentAdministration, TreatmentCourse
-from .serializers import TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_assessment_serializer, build_outcome_serializer, build_record_serializer
+from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, DiseaseProgressionRecord, Histopathology, IHCResult, IRECISTAssessment, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalResponseAssessment, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, RadiotherapyCourse, RECIST11Assessment, SurgeryRecord, SurvivalFollowUp, TreatmentAdministration, TreatmentCourse
+from .serializers import RadiotherapyCourseSerializer, TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_assessment_serializer, build_outcome_serializer, build_record_serializer
 from .services.molecular import finalize_molecular_test
 
 
@@ -71,6 +71,20 @@ class TreatmentCourseViewSet(RecordModelViewSet):
 class TreatmentAdministrationViewSet(RecordModelViewSet):
     queryset = TreatmentAdministration.objects.select_related("treatment_course", "observation__patient", "drug").all()
     serializer_class = TreatmentAdministrationSerializer
+
+
+class SurgeryRecordViewSet(RecordModelViewSet):
+    queryset = SurgeryRecord.objects.select_related(
+        "observation__patient", "modality", "laterality"
+    ).all()
+    serializer_class = build_record_serializer(SurgeryRecord)
+
+
+class RadiotherapyCourseViewSet(RecordModelViewSet):
+    queryset = RadiotherapyCourse.objects.select_related(
+        "observation__patient", "site", "intent", "modality"
+    ).all()
+    serializer_class = RadiotherapyCourseSerializer
 
 
 class RECIST11AssessmentViewSet(RecordModelViewSet):
