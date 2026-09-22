@@ -1,36 +1,322 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Activity, ArrowLeft, ArrowRight, Check, ClipboardPlus, Moon, Sun } from 'lucide-react'
+import { Suspense, lazy, useEffect, useState } from 'react'
+import { Menu, Moon, Sun, X } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  NavLink,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom'
 import './App.css'
+import './themes.css'
+import { fetchCurrentUser, fetchSiteSettings, logoutUser, type ApiError, type AuthUser } from './api'
+import { LoadingState } from './components/registry-ui'
 
-type Theme = 'light' | 'dark'
-type IntakeDraft = { registrationNumber: string; patientName: string; sex: string; dateOfBirth: string; phone: string; observedOn: string; diagnosis: string; clinicalNotes: string; treatmentProtocol: string; treatmentStart: string; treatmentIntent: string; outcomeStatus: string; followUpOn: string }
-const steps = ['Patient', 'Observation', 'Treatment', 'Outcome review']
-const initialDraft: IntakeDraft = { registrationNumber: '', patientName: '', sex: '', dateOfBirth: '', phone: '', observedOn: new Date().toISOString().slice(0, 10), diagnosis: '', clinicalNotes: '', treatmentProtocol: '', treatmentStart: '', treatmentIntent: '', outcomeStatus: 'no_progression', followUpOn: '' }
+const PatientSearchPage = lazy(() => import('./pages/PatientSearchPage'))
+const PatientDetailPage = lazy(() => import('./pages/PatientDetailPage'))
+const PatientEntryPage = lazy(() => import('./pages/PatientEntryPage'))
+const EntriesPatientEntryPage = lazy(() => import('./pages/EntriesPatientEntryPage'))
+const EntriesPatientListPage = lazy(() => import('./pages/EntriesPatientListPage'))
+const LoginPage = lazy(() => import('./pages/LoginPage'))
+const LegacyDraftReviewPage = lazy(() => import('./pages/LegacyDraftReviewPage'))
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
+const LongitudinalAnalyticsPage = lazy(() => import('./pages/LongitudinalAnalyticsPage'))
+
+function routeAuthenticatedUser(user: AuthUser, navigate: ReturnType<typeof useNavigate>) {
+  if (user.default_redirect.startsWith('/admin')) {
+    window.location.assign(user.default_redirect)
+    return
+  }
+  navigate(user.default_redirect, { replace: true })
+}
+
+function LoginRedirect({ user }: { user: AuthUser }) {
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    routeAuthenticatedUser(user, navigate)
+  }, [navigate, user])
+
+  return (
+    <section className="panel">
+      <LoadingState label="Redirecting to your workspace" />
+    </section>
+  )
+}
+
+function AppHeader({
+  fullName,
+  role,
+  onLogout,
+  isLoggingOut,
+  siteSettings,
+  theme,
+  onToggleTheme,
+}: {
+  fullName: string
+  role: 'admin' | 'doctor' | 'user'
+  onLogout: () => void
+  isLoggingOut: boolean
+  siteSettings: {
+    site_title: string
+    header_eyebrow: string
+    site_description: string
+    logo_url: string
+    logo_alt_text: string
+  }
+  theme: 'light' | 'dark'
+  onToggleTheme: () => void
+}) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+
+  return (
+    <header className="topbar">
+      <div className="topbar-brand">
+        {siteSettings.logo_url ? (
+          <img className="topbar-logo" src={siteSettings.logo_url} alt={siteSettings.logo_alt_text} />
+        ) : null}
+        <div>
+          <p className="eyebrow">{siteSettings.header_eyebrow}</p>
+          <h1>{siteSettings.site_title}</h1>
+          {siteSettings.site_description ? <p className="topbar-description">{siteSettings.site_description}</p> : null}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="mobile-menu-toggle"
+        onClick={() => setMobileMenuOpen((open) => !open)}
+        aria-expanded={mobileMenuOpen}
+        aria-controls="mobile-primary-navigation"
+        aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+      >
+        {mobileMenuOpen ? <X size={21} /> : <Menu size={21} />}
+      </button>
+      <div className={`topbar-actions${mobileMenuOpen ? ' is-open' : ''}`}>
+        <nav id="mobile-primary-navigation" className="topnav" aria-label="Primary">
+          <NavLink
+            to="/patients"
+            className={({ isActive }) =>
+              isActive ? 'topnav-link topnav-link-active' : 'topnav-link'
+            }
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Patients
+          </NavLink>
+          <NavLink
+            to="/analytics"
+            className={({ isActive }) =>
+              isActive ? 'topnav-link topnav-link-active' : 'topnav-link'
+            }
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Summary dashboard
+          </NavLink>
+          <NavLink
+            to="/longitudinal-analytics"
+            className={({ isActive }) =>
+              isActive ? 'topnav-link topnav-link-active' : 'topnav-link'
+            }
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Longitudinal Insights
+          </NavLink>
+          <NavLink
+            to="/entries/new"
+            className={({ isActive }) =>
+              isActive ? 'topnav-link topnav-link-active' : 'topnav-link'
+            }
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            New Entry
+          </NavLink>
+          {role === 'admin' ? (
+            <NavLink
+              to="/legacy-review"
+              className={({ isActive }) =>
+                isActive ? 'topnav-link topnav-link-active' : 'topnav-link'
+              }
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              Legacy Review
+            </NavLink>
+          ) : null}
+          {role === 'admin' ? (
+            <a className="topnav-link" href="/admin/" onClick={() => setMobileMenuOpen(false)}>
+              Django Admin
+            </a>
+          ) : null}
+        </nav>
+        <div className="user-badge-cluster">
+          <span className="data-pill">
+            {role === 'admin' ? 'Registry Admin' : role === 'doctor' ? 'Doctor' : 'User'}
+          </span>
+          <span className="data-pill">{fullName}</span>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              setMobileMenuOpen(false)
+              onLogout()
+            }}
+            disabled={isLoggingOut}
+          >
+            {isLoggingOut ? 'Signing out...' : 'Logout'}
+          </button>
+        </div>
+      </div>
+      <button
+        type="button"
+        className={theme === 'dark' ? 'theme-toggle theme-toggle-dark' : 'theme-toggle'}
+        onClick={onToggleTheme}
+        aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      >
+        <Sun size={14} aria-hidden="true" />
+        <span className="theme-toggle-thumb">{theme === 'dark' ? <Moon size={13} /> : null}</span>
+        <Moon size={14} aria-hidden="true" />
+      </button>
+    </header>
+  )
+}
+
+function ProtectedRoutes({ role }: { role: AuthUser['role'] }) {
+  return (
+    <Routes>
+      <Route index element={<Navigate to="/patients" replace />} />
+      <Route path="patients/new" element={<EntriesPatientEntryPage />} />
+      <Route path="entries/new" element={<EntriesPatientEntryPage />} />
+      <Route path="entries/patients" element={<EntriesPatientListPage />} />
+      <Route path="entries/patients/:patientId" element={<PatientDetailPage />} />
+      <Route path="patients/:registryId/edit" element={<PatientEntryPage />} />
+      <Route path="patients" element={<PatientSearchPage />} />
+      <Route path="analytics" element={<AnalyticsPage />} />
+      <Route path="longitudinal-analytics" element={<LongitudinalAnalyticsPage />} />
+      <Route path="patients/:registryId" element={<PatientDetailPage />} />
+      <Route
+        path="legacy-review"
+        element={role === 'admin' ? <LegacyDraftReviewPage /> : <Navigate to="/patients" replace />}
+      />
+      <Route path="*" element={<Navigate to="/patients" replace />} />
+    </Routes>
+  )
+}
 
 function App() {
-  const [theme, setTheme] = useState<Theme>(() => localStorage.getItem('lung-registry-theme') === 'light' ? 'light' : 'dark')
-  const [step, setStep] = useState(0)
-  const [draft, setDraft] = useState<IntakeDraft>(initialDraft)
-  const [saved, setSaved] = useState(false)
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('lung-registry-theme', theme) }, [theme])
-  const completion = useMemo(() => Math.round(((step + 1) / steps.length) * 100), [step])
-  const update = (field: keyof IntakeDraft, value: string) => { setSaved(false); setDraft(current => ({ ...current, [field]: value })) }
-  const next = () => setStep(current => Math.min(current + 1, steps.length - 1))
-  const previous = () => setStep(current => Math.max(current - 1, 0))
-  const saveDraft = () => { localStorage.setItem('lung-registry-intake-draft', JSON.stringify(draft)); setSaved(true) }
-  return <main className="app-shell">
-    <aside className="sidebar"><div className="brand"><span className="brand-mark"><Activity size={20} /></span><span>Lung Registry</span></div><div className="sidebar-copy"><p className="eyebrow">Longitudinal care</p><h1>New patient record</h1><p>Capture a clean starting point for care, treatment, and outcomes.</p></div><nav aria-label="Intake stages" className="step-nav">{steps.map((name, index) => <button className={index === step ? 'step-link active' : 'step-link'} key={name} onClick={() => setStep(index)} type="button"><span>{index < step ? <Check size={15} /> : index + 1}</span>{name}</button>)}</nav><div className="sidebar-footer"><div className="progress-label"><span>Record progress</span><span>{completion}%</span></div><div className="progress-track"><span style={{ width: `${completion}%` }} /></div></div></aside>
-    <section className="workspace"><header className="topbar"><div><p className="eyebrow">Registry intake</p><h2>{steps[step]}</h2></div><button className="theme-button" type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle colour theme">{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}<span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span></button></header>
-      <div className="content-wrap"><section className="form-card"><div className="form-heading"><div className="heading-icon"><ClipboardPlus size={21} /></div><div><h3>{step === 0 ? 'Patient identity' : step === 1 ? 'Clinical observation' : step === 2 ? 'Treatment course' : 'Outcome checkpoint'}</h3><p>{step === 0 ? 'Use the registry number as the durable patient identifier.' : step === 1 ? 'Record the clinical context observed on this date.' : step === 2 ? 'Start a treatment course without losing its care context.' : 'Events are retained; PFS and OS are calculated later.'}</p></div></div>
-        {step === 0 && <PatientFields draft={draft} update={update} />}{step === 1 && <ObservationFields draft={draft} update={update} />}{step === 2 && <TreatmentFields draft={draft} update={update} />}{step === 3 && <OutcomeFields draft={draft} update={update} />}
-        <footer className="form-actions"><button className="button secondary" disabled={step === 0} onClick={previous} type="button"><ArrowLeft size={17} /> Back</button><div className="save-status" aria-live="polite">{saved && <><Check size={16} /> Draft saved locally</>}</div>{step < steps.length - 1 ? <button className="button primary" onClick={next} type="button">Continue <ArrowRight size={17} /></button> : <button className="button primary" onClick={saveDraft} type="button"><Check size={17} /> Save draft</button>}</footer></section>
-        <aside className="context-card"><p className="eyebrow">Data principle</p><h3>Events first. Metrics later.</h3><p>Progression and survival follow-ups are longitudinal events. The analysis layer computes PFS and OS from the source dates.</p><div className="context-line" /><p className="muted">This first form is structured around the Django records API and is ready for live API submission in the next pass.</p></aside></div>
-    </section></main>
+  const location = useLocation()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const [theme, setTheme] = useState<'light' | 'dark'>(
+    () => (window.localStorage.getItem('lung-registry-theme') === 'dark' ? 'dark' : 'light'),
+  )
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem('lung-registry-theme', theme)
+  }, [theme])
+  const authQuery = useQuery({
+    queryKey: ['auth-user'],
+    queryFn: fetchCurrentUser,
+    retry: false,
+  })
+  const siteSettingsQuery = useQuery({
+    queryKey: ['site-settings'],
+    queryFn: fetchSiteSettings,
+    staleTime: Infinity,
+  })
+  const siteSettings = siteSettingsQuery.data ?? {
+    site_title: 'Lungcancer Registry',
+    header_eyebrow: 'Lung Cancer Registry',
+    site_description: '',
+    logo_url: '',
+    logo_alt_text: 'Lungcancer Registry logo',
+    favicon_url: '',
+  }
+
+  useEffect(() => {
+    document.title = siteSettings.site_title
+    const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
+    if (favicon && siteSettings.favicon_url) favicon.href = siteSettings.favicon_url
+  }, [siteSettings.favicon_url, siteSettings.site_title])
+  const logoutMutation = useMutation({
+    mutationFn: logoutUser,
+    onSuccess: async () => {
+      queryClient.setQueryData(['auth-user'], null)
+      await queryClient.cancelQueries({ queryKey: ['auth-user'] })
+      queryClient.removeQueries({ queryKey: ['auth-user'] })
+      navigate('/login', { replace: true })
+    },
+  })
+
+  if (authQuery.isLoading) {
+    return (
+      <div className="app-shell">
+        <main className="page-frame">
+          <section className="panel">
+            <LoadingState label="Checking session" />
+          </section>
+        </main>
+      </div>
+    )
+  }
+
+  const authError = authQuery.error as ApiError | null
+  const isUnauthenticated = authError?.status === 401 || authError?.status === 403
+  const user = isUnauthenticated ? null : authQuery.data ?? null
+  const showHeader = Boolean(user) && location.pathname !== '/login'
+
+  return (
+    <div className="app-shell">
+      {showHeader ? (
+        <AppHeader
+          fullName={user?.full_name || user?.username || 'User'}
+          role={user?.role || 'user'}
+          onLogout={() => logoutMutation.mutate()}
+          isLoggingOut={logoutMutation.isPending}
+          siteSettings={siteSettings}
+          theme={theme}
+          onToggleTheme={() => setTheme((current) => (current === 'light' ? 'dark' : 'light'))}
+        />
+      ) : null}
+      <main className="page-frame">
+        <Suspense
+          fallback={
+            <section className="panel">
+              <LoadingState label="Loading route" />
+            </section>
+          }
+        >
+          <Routes>
+            <Route
+              path="/login"
+              element={
+                user ? (
+                  <LoginRedirect user={user} />
+                ) : (
+                  <LoginPage />
+                )
+              }
+            />
+            <Route
+              path="/*"
+              element={
+                isUnauthenticated || !user ? (
+                  <Navigate
+                    to="/login"
+                    replace
+                    state={{ from: { pathname: location.pathname } }}
+                  />
+                ) : (
+                  <ProtectedRoutes role={user.role} />
+                )
+              }
+            />
+          </Routes>
+        </Suspense>
+      </main>
+    </div>
+  )
 }
-type FieldsProps = { draft: IntakeDraft; update: (field: keyof IntakeDraft, value: string) => void }
-function PatientFields({ draft, update }: FieldsProps) { return <div className="fields-grid"><Field label="Registry number" required><input value={draft.registrationNumber} onChange={e => update('registrationNumber', e.target.value)} placeholder="LR-2026-0001" /></Field><Field label="Full name" required><input value={draft.patientName} onChange={e => update('patientName', e.target.value)} placeholder="Patient name" /></Field><Field label="Sex"><select value={draft.sex} onChange={e => update('sex', e.target.value)}><option value="">Select sex</option><option>Female</option><option>Male</option><option>Other / not recorded</option></select></Field><Field label="Date of birth"><input type="date" value={draft.dateOfBirth} onChange={e => update('dateOfBirth', e.target.value)} /></Field><Field label="Phone number"><input type="tel" value={draft.phone} onChange={e => update('phone', e.target.value)} placeholder="+880 …" /></Field></div> }
-function ObservationFields({ draft, update }: FieldsProps) { return <div className="fields-grid"><Field label="Observation date" required><input type="date" value={draft.observedOn} onChange={e => update('observedOn', e.target.value)} /></Field><Field label="Working diagnosis"><input value={draft.diagnosis} onChange={e => update('diagnosis', e.target.value)} placeholder="e.g. Non-small cell lung cancer" /></Field><Field label="Clinical notes" className="span-two"><textarea value={draft.clinicalNotes} onChange={e => update('clinicalNotes', e.target.value)} placeholder="Symptoms, staging context, pathology summary, or other relevant findings." rows={6} /></Field></div> }
-function TreatmentFields({ draft, update }: FieldsProps) { return <div className="fields-grid"><Field label="Protocol / regimen"><input value={draft.treatmentProtocol} onChange={e => update('treatmentProtocol', e.target.value)} placeholder="e.g. Carboplatin + pemetrexed" /></Field><Field label="Treatment start"><input type="date" value={draft.treatmentStart} onChange={e => update('treatmentStart', e.target.value)} /></Field><Field label="Treatment intent"><select value={draft.treatmentIntent} onChange={e => update('treatmentIntent', e.target.value)}><option value="">Select intent</option><option>Curative</option><option>Neoadjuvant</option><option>Adjuvant</option><option>Palliative</option></select></Field></div> }
-function OutcomeFields({ draft, update }: FieldsProps) { return <div className="fields-grid"><Field label="Disease status"><select value={draft.outcomeStatus} onChange={e => update('outcomeStatus', e.target.value)}><option value="no_progression">No progression</option><option value="progressed">Progressed</option><option value="unknown">Unknown</option></select></Field><Field label="Follow-up date"><input type="date" value={draft.followUpOn} onChange={e => update('followUpOn', e.target.value)} /></Field><div className="info-banner span-two"><Activity size={18} /><span>When status is progressed or dead, the live form will require the event date before it can be submitted.</span></div></div> }
-function Field({ label, required, className = '', children }: { label: string; required?: boolean; className?: string; children: React.ReactNode }) { return <label className={`field ${className}`}><span>{label}{required && <b> *</b>}</span>{children}</label> }
+
 export default App

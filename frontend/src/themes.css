@@ -1,0 +1,381 @@
+/* The only palette file for the React workspace. Set data-theme on <html>. */
+:root {
+  --font-display: 'Aptos Display', 'Segoe UI Variable', sans-serif;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+  --app-bg: #eef5fa;
+  --app-glow-a: rgba(18, 182, 164, 0.14);
+  --app-glow-b: rgba(40, 114, 222, 0.1);
+  --surface: rgba(255, 255, 255, 0.94);
+  --surface-strong: #ffffff;
+  --surface-muted: #f4f8fc;
+  --text: #102f49;
+  --muted: #587087;
+  --faint: #71879a;
+  --border: rgba(15, 76, 129, 0.14);
+  --accent: #007f76;
+  --accent-bright: #008fdf;
+  --accent-soft: rgba(0, 127, 118, 0.1);
+  --chip-text: #12496f;
+  --shadow: rgba(15, 53, 87, 0.1);
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --app-bg: #07111f;
+  --app-glow-a: rgba(0, 238, 197, 0.12);
+  --app-glow-b: rgba(76, 96, 255, 0.15);
+  --surface: rgba(11, 28, 47, 0.96);
+  --surface-strong: #0e233a;
+  --surface-muted: #091a2d;
+  --text: #e7f3ff;
+  --muted: #a1b7cc;
+  --faint: #7893aa;
+  --border: rgba(116, 204, 255, 0.19);
+  --accent: #45f2d0;
+  --accent-bright: #38a7ff;
+  --accent-soft: rgba(69, 242, 208, 0.11);
+  --chip-text: #dff9ff;
+  --shadow: rgba(0, 0, 0, 0.3);
+}
+
+html[data-theme] body { background: var(--app-bg); color: var(--text); }
+html[data-theme] body,
+html[data-theme] #root { overflow-x: clip; }
+html[data-theme] .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--app-bg) 88%, transparent);
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--border);
+}
+html[data-theme] .app-shell {
+  background:
+    radial-gradient(circle at 12% 0%, var(--app-glow-a), transparent 27%),
+    radial-gradient(circle at 88% 8%, var(--app-glow-b), transparent 25%),
+    var(--app-bg);
+}
+
+html[data-theme] .topbar h1,
+html[data-theme] .hero-copy h2,
+html[data-theme] .panel h3,
+html[data-theme] .entry-record-check-copy h3,
+html[data-theme] .auth-hero h2,
+html[data-theme] .patient-name,
+html[data-theme] .timeline-title,
+html[data-theme] .metric-value,
+html[data-theme] .detail-grid .data-point strong,
+html[data-theme] .clinical-card-title strong,
+html[data-theme] .compare-summary-card strong,
+html[data-theme] .empty-title,
+html[data-theme] .data-point strong,
+html[data-theme] .data-badge strong,
+html[data-theme] .list-panel-title,
+html[data-theme] .mini-chip { color: var(--text) !important; }
+
+html[data-theme] .hero-text,
+html[data-theme] .metric-description,
+html[data-theme] .patient-subtitle,
+html[data-theme] .timeline-subtitle,
+html[data-theme] .data-point span,
+html[data-theme] .filter-field span,
+html[data-theme] .search-label,
+html[data-theme] .inline-filter-label,
+html[data-theme] .entry-inline-note,
+html[data-theme] .compare-report-body p,
+html[data-theme] .pagination-label,
+html[data-theme] .entry-lookup-status,
+html[data-theme] .entry-match small { color: var(--muted); }
+
+html[data-theme] .eyebrow,
+html[data-theme] .metric-label,
+html[data-theme] .clinical-card-title small { color: var(--accent); }
+
+/* Analytics KPIs are headings and values rather than the reusable metric-card
+   markup, so bind them directly to each theme's high-contrast tokens. */
+html[data-theme] .analytics-kpis span { color: var(--muted); }
+html[data-theme] .analytics-kpis strong { color: var(--accent); }
+html[data-theme='dark'] .analytics-kpis strong {
+  text-shadow: 0 0 16px rgba(87, 247, 216, 0.22);
+}
+html[data-theme] .analytics-definitions p,
+html[data-theme] .analytics-survival-note { color: var(--muted); }
+html[data-theme] .analytics-definitions strong,
+html[data-theme] .analytics-survival-note a { color: var(--text); }
+html[data-theme] .analytics-survival-note a { text-decoration-color: var(--accent); text-underline-offset: 0.16em; }
+
+html[data-theme] .hero-panel,
+html[data-theme] .panel,
+html[data-theme] .metric-card,
+html[data-theme] .patient-card,
+html[data-theme] .auth-hero,
+html[data-theme] .auth-panel,
+html[data-theme] .repeatable-card,
+html[data-theme] .chart-box,
+html[data-theme] .registry-table-wrap,
+html[data-theme] .compare-card,
+html[data-theme] .timeline-card,
+html[data-theme] .entry-record-check,
+html[data-theme] .compare-report,
+html[data-theme] .compare-summary-card,
+html[data-theme] .compare-summary-card-neutral {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: 0 18px 40px var(--shadow);
+}
+
+html[data-theme] .topnav-link,
+html[data-theme] .secondary-button,
+html[data-theme] .section-chip,
+html[data-theme] .data-badge,
+html[data-theme] .result-chip,
+html[data-theme] .data-pill,
+html[data-theme] .status-pill,
+html[data-theme] .auth-role-card,
+html[data-theme] .entry-step,
+html[data-theme] .entry-match,
+html[data-theme] .list-panel,
+html[data-theme] .inline-filter-select,
+html[data-theme] .filter-select,
+html[data-theme] .auth-input,
+html[data-theme] .entry-textarea,
+html[data-theme] .pager-button,
+html[data-theme] .legacy-review-filters input,
+html[data-theme] .legacy-review-filters select {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-muted);
+}
+
+html[data-theme] .entry-step strong { color: var(--text); }
+html[data-theme] .entry-step span { color: var(--accent); }
+
+html[data-theme] .auth-role-card strong { color: var(--text); }
+html[data-theme] .auth-role-card .compare-summary-label { color: var(--muted); }
+
+/* Structured-entry detail panels use the same palette in both themes. */
+html[data-theme] .entry-field-help,
+html[data-theme] .entry-protocol-helper,
+html[data-theme] .entry-outcome-note { color: var(--muted); }
+
+html[data-theme] .entry-protocol-builder,
+html[data-theme] .entry-response-assessments,
+html[data-theme] .entry-outcome-card {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-muted);
+}
+
+html[data-theme] .entry-response-card {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-strong);
+}
+
+html[data-theme] .entry-protocol-phase { border-color: var(--border); }
+html[data-theme] .entry-protocol-phase-head strong,
+html[data-theme] .entry-protocol-builder-head h4,
+html[data-theme] .entry-response-card h4,
+html[data-theme] .entry-response-assessments-head h4 { color: var(--text); }
+
+html[data-theme] .entry-protocol-summary {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--accent-soft);
+}
+html[data-theme] .entry-protocol-summary span { color: var(--accent); }
+html[data-theme] .entry-protocol-summary strong { color: var(--text); }
+
+html[data-theme] .entry-choice-group legend,
+html[data-theme] .entry-radio-group legend { color: var(--muted); }
+html[data-theme] .entry-multi-trigger {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-muted);
+}
+html[data-theme] .entry-multi-options {
+  border-color: var(--accent);
+  background: var(--surface-strong);
+  box-shadow: 0 18px 36px var(--shadow);
+}
+html[data-theme] .entry-protocol-icon-button { color: var(--accent); }
+
+html[data-theme] .search-row {
+  border-color: var(--border);
+  background: var(--surface-muted);
+}
+html[data-theme] .entry-match-area { border-color: var(--border); }
+html[data-theme] .search-input {
+  color: var(--text);
+  background: transparent;
+}
+html[data-theme] .search-input::placeholder { color: var(--faint); }
+html[data-theme] .date-picker-button { color: var(--accent); }
+html[data-theme] .date-picker-button:hover { background: var(--accent-soft); }
+
+html[data-theme] .topnav-link-active,
+html[data-theme] .primary-button,
+html[data-theme] .auth-submit,
+html[data-theme] .entry-step-active {
+  color: #ffffff;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-bright));
+}
+html[data-theme] .entry-step-active strong,
+html[data-theme] .entry-step-active span { color: #ffffff; }
+
+/* Dark mode uses a quieter active state to avoid large high-luminance cyan blocks. */
+html[data-theme='dark'] .topnav-link-active,
+html[data-theme='dark'] .entry-step-active,
+html[data-theme='dark'] .primary-button,
+html[data-theme='dark'] .auth-submit {
+  border-color: rgba(69, 242, 208, 0.42);
+  background: linear-gradient(135deg, #0b5e63, #164b87);
+  color: #d9f8f2;
+  box-shadow: 0 8px 20px rgba(8, 169, 155, 0.16);
+}
+html[data-theme='dark'] .entry-step-active strong { color: #d9f8f2; }
+html[data-theme='dark'] .entry-step-active span {
+  background: rgba(69, 242, 208, 0.15);
+  color: #6ff8de;
+}
+
+html[data-theme] .data-pill,
+html[data-theme] .result-chip,
+html[data-theme] .data-badge,
+html[data-theme] .mini-chip { color: var(--chip-text); }
+html[data-theme] .list-panel .mini-chip {
+  color: var(--text) !important;
+  border-color: var(--border);
+  background: var(--surface-muted);
+}
+html[data-theme] .panel-heading,
+html[data-theme] .data-point,
+html[data-theme] .registry-table tbody td,
+html[data-theme] .list-panel-items li { border-color: var(--border); }
+html[data-theme] .registry-table thead th { color: var(--muted); background: var(--surface-muted); }
+html[data-theme] .registry-table tbody td,
+html[data-theme] .registry-table a,
+html[data-theme] .table-patient,
+html[data-theme] .table-arrow-cell,
+html[data-theme] .registry-row,
+html[data-theme] .sort-button,
+html[data-theme] .back-link { color: var(--text); }
+html[data-theme] .table-patient strong { color: var(--text) !important; }
+html[data-theme] .table-patient span { color: var(--muted) !important; }
+html[data-theme] .registry-row:hover { background: var(--accent-soft); }
+html[data-theme] .registry-expanded-row td { background: var(--surface-muted); }
+
+html[data-theme] .clinical-card {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: 0 12px 28px var(--shadow);
+}
+html[data-theme] .clinical-card[open] { border-color: var(--accent); }
+html[data-theme] .clinical-card-icon,
+html[data-theme] .metric-icon,
+html[data-theme] .panel-icon,
+html[data-theme] .entry-record-check-icon { color: var(--accent); background: var(--accent-soft); }
+html[data-theme] .clinical-card-state-live,
+html[data-theme] .clinical-card-chevron { color: var(--accent); }
+html[data-theme] .clinical-card-state,
+html[data-theme] .clinical-card-empty-copy { color: var(--muted); }
+html[data-theme] .clinical-card-body { border-color: var(--border); }
+html[data-theme] .response-card-stack { display: grid; gap: 0.75rem; padding-top: 0.9rem; }
+html[data-theme] .treatment-response-card {
+  padding: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+html[data-theme] .treatment-response-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+html[data-theme] .treatment-response-head .eyebrow { margin-bottom: 0.25rem; font-size: 0.68rem; }
+html[data-theme] .treatment-response-head h4 { margin: 0; color: var(--text); font-size: 0.95rem; }
+html[data-theme] .response-assessment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.8rem; padding-top: 0.8rem; }
+html[data-theme] .response-assessment-grid section { padding: 0.75rem; border: 1px solid var(--border); border-radius: 12px; }
+html[data-theme] .response-assessment-grid h5 { margin: 0; color: var(--accent); font-size: 0.76rem; letter-spacing: 0.08em; text-transform: uppercase; }
+html[data-theme] .response-assessment-grid .detail-grid { padding-top: 0.4rem; }
+html[data-theme] .molecular-chart {
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+html[data-theme] .marker-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.85rem; margin-top: 0.85rem; }
+html[data-theme] .marker-chart-box { min-height: 0; }
+html[data-theme] .clinical-chart-export-wrap { position: relative; }
+html[data-theme] .clinical-chart-export-button {
+  position: absolute;
+  z-index: 2;
+  top: 0.45rem;
+  right: 0.5rem;
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--accent);
+  cursor: pointer;
+}
+html[data-theme] .clinical-chart-export-button:hover { background: var(--accent-soft); }
+.theme-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 3.8rem;
+  height: 2.1rem;
+  padding: 0 0.38rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--text);
+  cursor: pointer;
+}
+.theme-toggle:hover { border-color: var(--accent); }
+.theme-toggle > svg { position: relative; z-index: 1; color: var(--faint); }
+.theme-toggle-thumb {
+  position: absolute;
+  top: 0.22rem;
+  left: 0.24rem;
+  display: grid;
+  place-items: center;
+  width: 1.52rem;
+  height: 1.52rem;
+  border-radius: 999px;
+  color: #073127;
+  background: var(--accent);
+  box-shadow: 0 3px 10px var(--shadow);
+  transition: transform 180ms ease, background 180ms ease;
+}
+.theme-toggle-dark .theme-toggle-thumb { transform: translateX(1.65rem); background: var(--accent-bright); color: #ffffff; }
+
+@media (max-width: 760px) {
+  html[data-theme] .topbar {
+    position: static;
+    backdrop-filter: none;
+  }
+  .theme-toggle {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    width: 3.8rem;
+    box-shadow: none;
+  }
+  html[data-theme] .response-assessment-grid { grid-template-columns: 1fr; }
+  html[data-theme] .marker-chart-grid { grid-template-columns: 1fr; }
+}
