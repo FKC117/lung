@@ -3166,7 +3166,20 @@ export default function EntriesPatientEntryPage() {
                     label="Panel version"
                     value={row.panel_version}
                     options={getOptions("molecular-panel-versions")}
-                    onChange={(value) => updateRow(setMolecular, index, "panel_version", value)}
+                    onChange={(value) =>
+                      setMolecular((rows) => rows.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? {
+                              ...item,
+                              panel_version: value,
+                              panel_target: "",
+                              gene: "",
+                              exon: "",
+                              alteration_type: "",
+                            }
+                          : item,
+                      ))
+                    }
                   />
                   <SelectField
                     label="Panel target"
