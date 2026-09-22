@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "import_export",
     "options",
     "records",
+    "prescriptions",
 ]
 
 MIDDLEWARE = [
@@ -137,6 +138,15 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = "static/"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+# Optional absolute path for Windows installations where tesseract.exe is not on PATH.
+TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
+TESSERACT_LANGUAGES = os.getenv("TESSERACT_LANGUAGES", "eng")
+PRESCRIPTION_EXTRACTION_MODEL = os.getenv("PRESCRIPTION_EXTRACTION_MODEL", "").strip()
+PRESCRIPTION_EXTRACTION_PROMPT_VERSION = "1.0"
+# Leave blank until the clinic explicitly confirms how ambiguous numeric dates are written.
+PRESCRIPTION_DATE_ORDER = os.getenv("PRESCRIPTION_DATE_ORDER", "").strip().upper()
 
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS")
 

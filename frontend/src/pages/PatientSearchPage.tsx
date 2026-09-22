@@ -1,91 +1,23 @@
-// LEGACY_UI: dashboard cards still use the retired workspace summary API.
 import { Fragment, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Activity,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
   ChevronUp,
-  Microscope,
   Plus,
   Search,
-  Stethoscope,
   Waves,
 } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   buildPatientExportUrl,
-  fetchDashboardSummary,
   fetchPatients,
-  type DashboardSummary,
 } from '../api'
 import { EmptyState, LoadingState } from '../components/registry-ui'
 import { ClinicalChart } from '../components/ClinicalChart'
 import { metricPalette } from '../lib/registry'
-
-function DashboardSection({
-  summary,
-  isLoading,
-}: {
-  summary?: DashboardSummary
-  isLoading: boolean
-}) {
-  const metrics = [
-    {
-      label: 'Patients',
-      value: summary?.patients ?? 0,
-      description: 'Canonical patient records',
-      icon: Stethoscope,
-    },
-    {
-      label: 'Observations',
-      value: summary?.observations ?? 0,
-      description: 'Clinical observation records',
-      icon: Activity,
-    },
-    {
-      label: 'Published Patients',
-      value: summary?.published_patients ?? 0,
-      description: `${summary?.published_observations ?? 0} published observations`,
-      icon: Microscope,
-    },
-    {
-      label: 'Draft Patients',
-      value: summary?.draft_patients ?? 0,
-      description: `${summary?.draft_observations ?? 0} draft observations`,
-      icon: Waves,
-    },
-  ]
-
-  return (
-    <section className="metric-grid">
-      {metrics.map((metric, index) => {
-        const Icon = metric.icon
-        return (
-          <article key={metric.label} className="metric-card">
-            <div
-              className="metric-icon"
-              style={{
-                backgroundColor: `${metricPalette[index]}14`,
-                color: metricPalette[index],
-              }}
-            >
-              <Icon size={18} />
-            </div>
-            <p className="metric-label">{metric.label}</p>
-            <p className="metric-value">
-              {isLoading ? '...' : metric.value.toLocaleString()}
-            </p>
-            <p className="metric-description">{metric.description}</p>
-          </article>
-        )
-      })}
-    </section>
-  )
-}
-
 export default function PatientSearchPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [draftQuery, setDraftQuery] = useState(searchParams.get('q') ?? '')
@@ -96,11 +28,6 @@ export default function PatientSearchPage() {
   const sortKey = searchParams.get('sort') ?? 'name'
   const sortDirection = searchParams.get('dir') ?? 'asc'
   const navigate = useNavigate()
-
-  const summaryQuery = useQuery({
-    queryKey: ['dashboard-summary'],
-    queryFn: fetchDashboardSummary,
-  })
 
   const patientsQuery = useQuery({
     queryKey: ['patients', deferredQuery, page, stateFilter, sortKey, sortDirection],
@@ -150,18 +77,6 @@ export default function PatientSearchPage() {
     (total, patient) => total + patient.observation_count,
     0,
   )
-
-  const publicationData = useMemo(() => {
-    const summary = summaryQuery.data
-    if (!summary) {
-      return []
-    }
-
-    return [
-      { name: 'Published Patients', value: summary.published_patients, fill: '#0f766e' },
-      { name: 'Draft Patients', value: summary.draft_patients, fill: '#fb923c' },
-    ]
-  }, [summaryQuery.data])
 
   const totalCount = patientsQuery.data?.count ?? 0
   const hasNextPage = Boolean(patientsQuery.data?.next)
@@ -289,43 +204,7 @@ export default function PatientSearchPage() {
         </form>
       </section>
 
-      <DashboardSection
-        summary={summaryQuery.data}
-        isLoading={summaryQuery.isLoading}
-      />
-
       <section className="insight-grid">
-        <article className="panel">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Registry Balance</p>
-              <h3>Patients by publication state</h3>
-            </div>
-            <Activity className="panel-icon" />
-          </div>
-          <div className="chart-box">
-            {summaryQuery.isLoading ? (
-              <LoadingState label="Loading summary" />
-            ) : (
-              <ClinicalChart
-                height={260}
-                option={{
-                  tooltip: { trigger: 'item', valueFormatter: (value) => String(value) },
-                  legend: { bottom: 0 },
-                  series: [{
-                    type: 'pie',
-                    radius: ['48%', '72%'],
-                    padAngle: 4,
-                    itemStyle: { borderRadius: 8, borderColor: 'transparent', borderWidth: 3 },
-                    label: { show: false },
-                    data: publicationData.map(({ name, value, fill }) => ({ name, value, itemStyle: { color: fill } })),
-                  }],
-                }}
-              />
-            )}
-          </div>
-        </article>
-
         <article className="panel">
           <div className="panel-heading">
             <div>

@@ -761,11 +761,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!headers.has("Accept")) {
     headers.set("Accept", "application/json");
   }
-  if (init?.body && !headers.has("Content-Type")) {
+  if (init?.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   if (method !== "GET" && method !== "HEAD" && !headers.has("X-CSRFToken")) {
-    const csrfToken = getCookie("csrftoken");
+    let csrfToken = getCookie("csrftoken");
+    // The registry uses Django's session login. Visiting its login endpoint is
+    // the supported way to obtain a CSRF cookie when a session was restored
+    // without one (for example after restarting the development server).
+    if (!csrfToken) {
+      await fetch(`${API_BASE_URL}/admin/login/`, { credentials: "include" });
+      csrfToken = getCookie("csrftoken");
+    }
     if (csrfToken) {
       headers.set("X-CSRFToken", csrfToken);
     }
@@ -1812,4 +1819,73 @@ export function buildPatientExportUrl(
 
 export function refreshLongitudinalAnalytics() {
   return request<{ status: 'current' | 'failed'; reason: string }>('/api/longitudinal-analytics/refresh/', { method: 'POST' })
+}
+
+export interface PrescriptionIssue {
+  id: number;
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  page_number: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface PrescriptionPage {
+  id: number;
+  page_number: number;
+  raw_text: string;
+  cleaned_text: string;
+  ocr_confidence: number | null;
+  image: string | null;
+  ocr_metadata: Record<string, unknown>;
+}
+
+export interface PrescriptionExtractionRun {
+  id: number;
+  schema_version: string;
+  prompt_version: string;
+  ai_model: string;
+  structured_data: Record<string, unknown>;
+  status: "pending" | "completed" | "failed";
+  error: string;
+  created_at: string;
+  completed_at: string | null;
+  issues: PrescriptionIssue[];
+}
+
+export interface PrescriptionDocument {
+  id: number;
+  file: string;
+  original_filename: string;
+  sha256: string;
+  patient: number | null;
+  page_count: number;
+  status: "uploaded" | "processing" | "ready_for_review" | "failed";
+  created_at: string;
+  processing_started_at: string | null;
+  processed_at: string | null;
+  pages: PrescriptionPage[];
+  extraction_runs: PrescriptionExtractionRun[];
+  issues: PrescriptionIssue[];
+}
+
+export function fetchPrescriptionDocuments() {
+  return request<PrescriptionDocument[]>("/api/prescriptions/documents/");
+}
+
+export function uploadPrescriptionDocument(file: File, patientId?: number) {
+  const form = new FormData();
+  form.append("file", file);
+  if (patientId) form.append("patient", String(patientId));
+  return request<PrescriptionDocument>("/api/prescriptions/documents/", {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function processPrescriptionDocument(documentId: number) {
+  return request<PrescriptionDocument>(
+    `/api/prescriptions/documents/${documentId}/process/`,
+    { method: "POST" },
+  );
 }

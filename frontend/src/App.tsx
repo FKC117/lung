@@ -21,6 +21,7 @@ const EntriesPatientListPage = lazy(() => import('./pages/EntriesPatientListPage
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const LongitudinalAnalyticsPage = lazy(() => import('./pages/LongitudinalAnalyticsPage'))
+const PrescriptionReviewPage = lazy(() => import('./pages/PrescriptionReviewPage'))
 
 function routeAuthenticatedUser(user: AuthUser, navigate: ReturnType<typeof useNavigate>) {
   if (user.default_redirect.startsWith('/admin')) {
@@ -129,6 +130,15 @@ function AppHeader({
           >
             New Entry
           </NavLink>
+          <NavLink
+            to="/prescriptions"
+            className={({ isActive }) =>
+              isActive ? 'topnav-link topnav-link-active' : 'topnav-link'
+            }
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Prescriptions
+          </NavLink>
           {role === 'admin' ? (
             <a className="topnav-link" href="/admin/" onClick={() => setMobileMenuOpen(false)}>
               Django Admin
@@ -179,6 +189,7 @@ function ProtectedRoutes() {
       <Route path="patients" element={<PatientSearchPage />} />
       <Route path="analytics" element={<AnalyticsPage />} />
       <Route path="longitudinal-analytics" element={<LongitudinalAnalyticsPage />} />
+      <Route path="prescriptions" element={<PrescriptionReviewPage />} />
       <Route path="patients/:registryId" element={<PatientDetailPage />} />
       <Route path="*" element={<Navigate to="/patients" replace />} />
     </Routes>

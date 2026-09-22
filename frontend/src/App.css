@@ -2674,6 +2674,59 @@
   background: rgba(5, 18, 32, 0.58);
 }
 
+.prescription-upload-panel {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.prescription-upload-panel > div { flex: 1 1 20rem; }
+
+.prescription-file-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 16rem;
+  padding: 0.8rem 1rem;
+  border: 1px dashed rgba(116, 204, 255, 0.3);
+  border-radius: 0.8rem;
+  color: #c7deee;
+  cursor: pointer;
+}
+
+.prescription-file-picker input { display: none; }
+
+.prescription-layout { display: grid; grid-template-columns: minmax(15rem, 0.36fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.prescription-queue { display: grid; gap: 0.55rem; }
+.prescription-queue-item { display: flex; align-items: flex-start; gap: 0.7rem; width: 100%; padding: 0.8rem; border: 1px solid transparent; border-radius: 0.8rem; background: transparent; color: #c7deee; text-align: left; cursor: pointer; }
+.prescription-queue-item:hover, .prescription-queue-item.is-selected { border-color: rgba(67, 241, 209, 0.42); background: rgba(32, 168, 198, 0.12); }
+.prescription-queue-item span { display: grid; gap: 0.22rem; min-width: 0; }
+.prescription-queue-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prescription-queue-item small { color: #91a9bf; }
+.prescription-review { min-width: 0; }
+.prescription-split-view { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.prescription-source, .prescription-extraction { min-width: 0; border: 1px solid rgba(116, 204, 255, 0.16); border-radius: 0.9rem; padding: 1rem; background: rgba(5, 18, 32, 0.48); }
+.prescription-subheading { display: flex; align-items: center; justify-content: space-between; gap: 0.7rem; margin-bottom: 0.8rem; }
+.prescription-subheading h3 { margin: 0; font-size: 1rem; }
+.prescription-ocr-text, .prescription-data-list pre { margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #c7deee; font: 0.82rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.prescription-ocr-text { min-height: 21rem; max-height: 42rem; padding: 0.85rem; border-radius: 0.65rem; background: rgba(1, 10, 20, 0.7); }
+.prescription-page-image { display: block; width: 100%; max-height: 28rem; margin-bottom: 0.8rem; object-fit: contain; border-radius: 0.65rem; background: #fff; }
+.prescription-data-list { display: grid; gap: 0.65rem; }
+.prescription-data-list article { padding: 0.75rem; border-radius: 0.65rem; background: rgba(1, 10, 20, 0.48); }
+.prescription-data-list strong { display: block; margin-bottom: 0.45rem; color: #43f1d1; text-transform: capitalize; }
+.prescription-issues { display: flex; gap: 0.7rem; margin: 0 0 1rem; padding: 0.8rem; border: 1px solid rgba(255, 190, 84, 0.4); border-radius: 0.75rem; background: rgba(154, 104, 19, 0.13); color: #ffd48a; }
+.prescription-issues p { margin: 0.25rem 0 0; color: #f0c57e; font-size: 0.86rem; }
+.prescription-error { color: #ff9c9c; }
+.prescription-confidence { padding: 0.28rem 0.5rem; border-radius: 999px; background: rgba(116, 204, 255, 0.12); color: #b9d4e9; font-size: 0.78rem; }
+.prescription-confidence.is-ready { background: rgba(67, 241, 209, 0.14); color: #71f4db; }
+.prescription-empty { min-height: 24rem; display: grid; place-content: center; justify-items: center; gap: 0.7rem; color: #91a9bf; text-align: center; }
+.prescription-empty h3 { margin: 0; color: #e8f5ff; }
+
+@media (max-width: 860px) {
+  .prescription-layout, .prescription-split-view { grid-template-columns: 1fr; }
+}
+
 .entry-form-actions {
   display: flex;
   gap: 0.75rem;

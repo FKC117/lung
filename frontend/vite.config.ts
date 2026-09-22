@@ -11,10 +11,14 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        // Django validates the Origin header on session-authenticated writes.
+        // During Vite development, make the proxied request same-origin to Django.
+        headers: { origin: 'http://127.0.0.1:8000' },
       },
       '/admin': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        headers: { origin: 'http://127.0.0.1:8000' },
       },
     },
   },

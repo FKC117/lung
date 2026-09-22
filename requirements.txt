@@ -7,6 +7,9 @@ psycopg
 google-genai
 langgraph
 pypdf
+PyMuPDF
+Pillow
+pytesseract
 pandas
 numpy
 scipy
