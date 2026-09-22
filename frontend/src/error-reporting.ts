@@ -1,4 +1,3 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const recentErrors = new Map<string, number>()
 
 type ErrorContext = {

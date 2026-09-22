@@ -1703,7 +1703,6 @@ async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean
         }),
       ),
     );
-    if (!draft) await request<RawRecord>(`/api/records/molecular-tests/${test.id}/finalize/`, { method: "POST" });
     await Promise.all(
       ((panelRecord.staging_results as RawRecord[] | undefined) ?? []).map((result) =>
         post("/api/records/pathological-staging-results/", {
@@ -1732,6 +1731,9 @@ async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean
         }),
       ),
     );
+    if (!draft) {
+      await request<RawRecord>(`/api/records/molecular-tests/${test.id}/finalize/`, { method: "POST" });
+    }
   }
   for (const row of payload.treatment_cycles ?? []) {
     const modality = Array.isArray(row.modalities) ? row.modalities[0] : undefined;

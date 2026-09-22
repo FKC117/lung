@@ -168,7 +168,7 @@ function AppHeader({
   )
 }
 
-function ProtectedRoutes({ role }: { role: AuthUser['role'] }) {
+function ProtectedRoutes() {
   return (
     <Routes>
       <Route index element={<Navigate to="/patients" replace />} />
@@ -290,7 +290,7 @@ function App() {
                     state={{ from: { pathname: location.pathname } }}
                   />
                 ) : (
-                  <ProtectedRoutes role={user.role} />
+                  <ProtectedRoutes />
                 )
               }
             />

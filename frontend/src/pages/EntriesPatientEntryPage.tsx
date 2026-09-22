@@ -1409,7 +1409,9 @@ export default function EntriesPatientEntryPage() {
 
   const optionResources = optionResourcesByStep[activeStep] ?? [];
   const optionsQuery = useQuery({
-    queryKey: ["entries-options", activeStep],
+    // Include the actual resource set: this prevents a cached earlier version
+    // of a step from omitting newly added controlled vocabularies.
+    queryKey: ["entries-options", activeStep, optionResources.join(",")],
     queryFn: () => fetchEntriesOptions(optionResources),
     // Revalidate after returning from option maintenance in Django admin.
     staleTime: 0,
@@ -1783,7 +1785,7 @@ export default function EntriesPatientEntryPage() {
         const method = toNumber(row.method);
         const specimen = toNumber(row.specimen);
         const testedAt = row.tested_at || undefined;
-        const key = [testedAt ?? "", method ?? "", specimen ?? ""].join("|");
+        const key = [row.panel_version || "", testedAt ?? "", method ?? "", specimen ?? ""].join("|");
         const test = molecularTests.get(key) ?? {
           panel_version: toNumber(row.panel_version),
           specimen_collected_on: row.specimen_collected_on || undefined,
@@ -3172,7 +3174,21 @@ export default function EntriesPatientEntryPage() {
                     options={getOptions("molecular-panel-targets").filter(
                       (option) => !row.panel_version || String(option.panel_version) === row.panel_version,
                     )}
-                    onChange={(value) => updateRow(setMolecular, index, "panel_target", value)}
+                    onChange={(value) => {
+                      const target = getOptions("molecular-panel-targets").find(
+                        (option) => String(option.id) === value,
+                      );
+                      setMolecular((rows) => rows.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? {
+                              ...item,
+                              panel_target: value,
+                              gene: String(target?.gene ?? item.gene),
+                              alteration_type: String(target?.alteration_type ?? item.alteration_type),
+                            }
+                          : item,
+                      ));
+                    }}
                   />
                   <TextField
                     label="Specimen collected on"
