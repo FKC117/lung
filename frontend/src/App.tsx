@@ -16,11 +16,9 @@ import { LoadingState } from './components/registry-ui'
 
 const PatientSearchPage = lazy(() => import('./pages/PatientSearchPage'))
 const PatientDetailPage = lazy(() => import('./pages/PatientDetailPage'))
-const PatientEntryPage = lazy(() => import('./pages/PatientEntryPage'))
 const EntriesPatientEntryPage = lazy(() => import('./pages/EntriesPatientEntryPage'))
 const EntriesPatientListPage = lazy(() => import('./pages/EntriesPatientListPage'))
 const LoginPage = lazy(() => import('./pages/LoginPage'))
-const LegacyDraftReviewPage = lazy(() => import('./pages/LegacyDraftReviewPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const LongitudinalAnalyticsPage = lazy(() => import('./pages/LongitudinalAnalyticsPage'))
 
@@ -132,17 +130,6 @@ function AppHeader({
             New Entry
           </NavLink>
           {role === 'admin' ? (
-            <NavLink
-              to="/legacy-review"
-              className={({ isActive }) =>
-                isActive ? 'topnav-link topnav-link-active' : 'topnav-link'
-              }
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              Legacy Review
-            </NavLink>
-          ) : null}
-          {role === 'admin' ? (
             <a className="topnav-link" href="/admin/" onClick={() => setMobileMenuOpen(false)}>
               Django Admin
             </a>
@@ -189,15 +176,10 @@ function ProtectedRoutes({ role }: { role: AuthUser['role'] }) {
       <Route path="entries/new" element={<EntriesPatientEntryPage />} />
       <Route path="entries/patients" element={<EntriesPatientListPage />} />
       <Route path="entries/patients/:patientId" element={<PatientDetailPage />} />
-      <Route path="patients/:registryId/edit" element={<PatientEntryPage />} />
       <Route path="patients" element={<PatientSearchPage />} />
       <Route path="analytics" element={<AnalyticsPage />} />
       <Route path="longitudinal-analytics" element={<LongitudinalAnalyticsPage />} />
       <Route path="patients/:registryId" element={<PatientDetailPage />} />
-      <Route
-        path="legacy-review"
-        element={role === 'admin' ? <LegacyDraftReviewPage /> : <Navigate to="/patients" replace />}
-      />
       <Route path="*" element={<Navigate to="/patients" replace />} />
     </Routes>
   )

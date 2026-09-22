@@ -127,6 +127,8 @@ type TreatmentAdministrationRow = {
   status: string;
   notes: string;
 };
+type ProgressionRecordRow = { status: string; assessed_on: string; progression_date: string; progression_sites: string[]; estimation_method: string; notes: string };
+type SurvivalFollowUpRow = { status: string; followed_up_on: string; death_date: string; cause_of_death: string; notes: string };
 type TreatmentRow = {
   modalities: string[];
   current_treatment_protocol: string;
@@ -342,6 +344,8 @@ const blankProtocolBuilder = (
 const blankTreatmentAdministration = (): TreatmentAdministrationRow => ({
   drug: "", administered_on: "", cycle_number: "", day_number: "", dose: "", dose_unit: "", status: "planned", notes: "",
 });
+const blankProgressionRecord = (): ProgressionRecordRow => ({ status: "", assessed_on: "", progression_date: "", progression_sites: [], estimation_method: "", notes: "" });
+const blankSurvivalFollowUp = (): SurvivalFollowUpRow => ({ status: "", followed_up_on: "", death_date: "", cause_of_death: "", notes: "" });
 const blankTreatment = (): TreatmentRow => ({
   modalities: [],
   current_treatment_protocol: "",
@@ -1385,6 +1389,8 @@ export default function EntriesPatientEntryPage() {
   const [treatments, setTreatments] = useState<TreatmentRow[]>([
     blankTreatment(),
   ]);
+  const [progressionRecords, setProgressionRecords] = useState<ProgressionRecordRow[]>([blankProgressionRecord()]);
+  const [survivalFollowUps, setSurvivalFollowUps] = useState<SurvivalFollowUpRow[]>([blankSurvivalFollowUp()]);
   const [surgeries, setSurgeries] = useState<SurgeryRow[]>([blankSurgery()]);
   const [radiotherapySchedules, setRadiotherapySchedules] = useState<
     RadiotherapyRow[]
@@ -2092,6 +2098,20 @@ export default function EntriesPatientEntryPage() {
             lateralities: ids(row.lateralities),
           }),
         ),
+      progression_records: progressionRecords
+        .filter((record) => record.status && record.assessed_on)
+        .map((record) => compact({
+          status: toNumber(record.status), assessed_on: record.assessed_on,
+          progression_date: record.progression_date || undefined,
+          progression_sites: ids(record.progression_sites),
+          estimation_method: toNumber(record.estimation_method), notes: record.notes,
+        })),
+      survival_followups: survivalFollowUps
+        .filter((record) => record.status && record.followed_up_on)
+        .map((record) => compact({
+          status: toNumber(record.status), followed_up_on: record.followed_up_on,
+          death_date: record.death_date || undefined, cause_of_death: record.cause_of_death, notes: record.notes,
+        })),
       radiotherapy_schedules: radiotherapySchedules
         .filter(
           (row) =>
@@ -3697,6 +3717,27 @@ export default function EntriesPatientEntryPage() {
                   />
                 </div>
               ))}
+            </RepeatableSection>
+            <RepeatableSection title="Disease progression records" onAdd={() => setProgressionRecords([...progressionRecords, blankProgressionRecord()])}>
+              {progressionRecords.map((record, index) => <div className="entry-grid repeatable-card" key={index}>
+                <SelectField label="Progression status" value={record.status} options={getOptions("disease-progression-statuses")} onChange={(value) => updateRow(setProgressionRecords, index, "status", value)} required />
+                <TextField label="Assessed on" type="date" value={record.assessed_on} onChange={(value) => updateRow(setProgressionRecords, index, "assessed_on", value)} required />
+                <TextField label="Progression date" type="date" value={record.progression_date} onChange={(value) => updateRow(setProgressionRecords, index, "progression_date", value)} />
+                <InlineCheckboxGroup label="Progression sites" options={getOptions("progression-sites")} value={record.progression_sites} onChange={(value) => updateRow(setProgressionRecords, index, "progression_sites", value)} />
+                <SelectField label="Estimation method" value={record.estimation_method} options={getOptions("response-estimation-methods")} onChange={(value) => updateRow(setProgressionRecords, index, "estimation_method", value)} />
+                <TextArea label="Progression notes" value={record.notes} onChange={(value) => updateRow(setProgressionRecords, index, "notes", value)} />
+                <RemoveButton show={progressionRecords.length > 1} onClick={() => setProgressionRecords(progressionRecords.filter((_, itemIndex) => itemIndex !== index))} />
+              </div>)}
+            </RepeatableSection>
+            <RepeatableSection title="Survival follow-ups" onAdd={() => setSurvivalFollowUps([...survivalFollowUps, blankSurvivalFollowUp()])}>
+              {survivalFollowUps.map((record, index) => <div className="entry-grid repeatable-card" key={index}>
+                <SelectField label="Survival status" value={record.status} options={getOptions("survival-statuses")} onChange={(value) => updateRow(setSurvivalFollowUps, index, "status", value)} required />
+                <TextField label="Followed up on" type="date" value={record.followed_up_on} onChange={(value) => updateRow(setSurvivalFollowUps, index, "followed_up_on", value)} required />
+                <TextField label="Death date" type="date" value={record.death_date} onChange={(value) => updateRow(setSurvivalFollowUps, index, "death_date", value)} />
+                <TextField label="Cause of death" value={record.cause_of_death} onChange={(value) => updateRow(setSurvivalFollowUps, index, "cause_of_death", value)} />
+                <TextArea label="Follow-up notes" value={record.notes} onChange={(value) => updateRow(setSurvivalFollowUps, index, "notes", value)} />
+                <RemoveButton show={survivalFollowUps.length > 1} onClick={() => setSurvivalFollowUps(survivalFollowUps.filter((_, itemIndex) => itemIndex !== index))} />
+              </div>)}
             </RepeatableSection>
             {/* LEGACY_UI: current backend has no surgery-records route. */}
             <RepeatableSection
