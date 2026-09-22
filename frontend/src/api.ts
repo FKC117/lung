@@ -1853,6 +1853,26 @@ export interface PrescriptionExtractionRun {
   issues: PrescriptionIssue[];
 }
 
+export interface PrescriptionReviewChange {
+  id: number;
+  field_path: string;
+  previous_value: unknown;
+  new_value: unknown;
+  changed_at: string;
+}
+
+export interface PrescriptionReview {
+  id: number;
+  selected_patient: number | null;
+  status: "draft" | "in_review" | "approved" | "rejected";
+  reviewed_data: Record<string, unknown>;
+  notes: string;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  changes: PrescriptionReviewChange[];
+}
+
 export interface PrescriptionDocument {
   id: number;
   file: string;
@@ -1867,6 +1887,7 @@ export interface PrescriptionDocument {
   pages: PrescriptionPage[];
   extraction_runs: PrescriptionExtractionRun[];
   issues: PrescriptionIssue[];
+  review?: PrescriptionReview;
 }
 
 export function fetchPrescriptionDocuments() {
@@ -1887,5 +1908,36 @@ export function processPrescriptionDocument(documentId: number) {
   return request<PrescriptionDocument>(
     `/api/prescriptions/documents/${documentId}/process/`,
     { method: "POST" },
+  );
+}
+
+export function startPrescriptionReview(documentId: number) {
+  return request<PrescriptionReview>(
+    `/api/prescriptions/documents/${documentId}/start-review/`,
+    { method: "POST" },
+  );
+}
+
+export function updatePrescriptionReview(
+  documentId: number,
+  payload: Pick<Partial<PrescriptionReview>, "selected_patient" | "reviewed_data" | "notes">,
+) {
+  return request<PrescriptionReview>(`/api/prescriptions/documents/${documentId}/review/`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function approvePrescriptionReview(documentId: number) {
+  return request<PrescriptionReview>(
+    `/api/prescriptions/documents/${documentId}/approve-review/`,
+    { method: "POST" },
+  );
+}
+
+export function rejectPrescriptionReview(documentId: number, reason: string) {
+  return request<PrescriptionReview>(
+    `/api/prescriptions/documents/${documentId}/reject-review/`,
+    { method: "POST", body: JSON.stringify({ reason }) },
   );
 }
