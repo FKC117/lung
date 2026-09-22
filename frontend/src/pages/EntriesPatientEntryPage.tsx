@@ -37,23 +37,14 @@ import {
   saveEntriesDraft,
 } from "../api";
 
-type MolecularRow = {
-  panel_version: string;
+type MolecularFindingRow = {
   panel_target: string;
   gene: string;
   exon: string;
   alteration_type: string;
   partner_gene: string;
   clinical_significance: string;
-  method: string;
-  specimen: string;
-  specimen_collected_on: string;
   result: string;
-  tested_at: string;
-  reported_on: string;
-  qc_status: string;
-  laboratory: string;
-  accession_number: string;
   dna_change: string;
   protein_change: string;
   common_name: string;
@@ -129,6 +120,19 @@ type TreatmentAdministrationRow = {
   dose_unit: string;
   status: string;
   notes: string;
+};
+type MolecularTestRow = {
+  panel_version: string;
+  method: string;
+  specimen: string;
+  specimen_collected_on: string;
+  tested_at: string;
+  reported_on: string;
+  qc_status: string;
+  laboratory: string;
+  accession_number: string;
+  notes: string;
+  findings: MolecularFindingRow[];
 };
 type ProgressionRecordRow = { status: string; assessed_on: string; progression_date: string; progression_sites: string[]; estimation_method: string; notes: string };
 type SurvivalFollowUpRow = { status: string; followed_up_on: string; death_date: string; cause_of_death: string; notes: string };
@@ -265,29 +269,23 @@ const optionResourcesByStep: Record<number, string[]> = {
   ],
 };
 
-const blankMolecular = (): MolecularRow => ({
-  panel_version: "",
+const blankMolecularFinding = (): MolecularFindingRow => ({
   panel_target: "",
   gene: "",
   exon: "",
   alteration_type: "",
   partner_gene: "",
   clinical_significance: "",
-  method: "",
-  specimen: "",
-  specimen_collected_on: "",
   result: "",
-  tested_at: "",
-  reported_on: "",
-  qc_status: "pending",
-  laboratory: "",
-  accession_number: "",
   dna_change: "",
   protein_change: "",
   common_name: "",
   variant_allele_frequency: "",
   copy_number: "",
   notes: "",
+});
+const blankMolecularTest = (): MolecularTestRow => ({
+  panel_version: "", method: "", specimen: "", specimen_collected_on: "", tested_at: "", reported_on: "", qc_status: "pending", laboratory: "", accession_number: "", notes: "", findings: [blankMolecularFinding()],
 });
 const blankMarker = (): MarkerRow => ({
   marker_name: "",
@@ -669,6 +667,7 @@ function StatusField({ label, value, onChange, choices }: { label: string; value
 
 const courseStatuses: Array<[string, string]> = [["planned", "Planned"], ["active", "Active"], ["completed", "Completed"], ["stopped", "Stopped"], ["held", "Held"], ["cancelled", "Cancelled"]]
 const surgeryStatuses: Array<[string, string]> = [["planned", "Planned"], ["performed", "Performed"], ["cancelled", "Cancelled"]]
+const molecularQcStatuses: Array<[string, string]> = [["pending", "Pending"], ["passed", "Passed"], ["partial", "Partially passed"], ["failed", "Failed"]]
 
 function TextField({
   label,
@@ -1390,8 +1389,8 @@ export default function EntriesPatientEntryPage() {
   void setPathologicalTnm;
   void setPathologicalDetails;
   void setIhcPanels;
-  const [molecular, setMolecular] = useState<MolecularRow[]>([
-    blankMolecular(),
+  const [molecular, setMolecular] = useState<MolecularTestRow[]>([
+    blankMolecularTest(),
   ]);
   const [markers, setMarkers] = useState<MarkerRow[]>([blankMarker()]);
   const [treatments, setTreatments] = useState<TreatmentRow[]>([
@@ -1644,7 +1643,7 @@ export default function EntriesPatientEntryPage() {
       if (formState.pastTreatments)
         setPastTreatments(formState.pastTreatments as PastTreatmentRow[]);
       if (formState.molecular)
-        setMolecular(formState.molecular as MolecularRow[]);
+        setMolecular(formState.molecular as MolecularTestRow[]);
       if (formState.markers) setMarkers(formState.markers as MarkerRow[]);
       if (formState.treatments)
         setTreatments(formState.treatments as TreatmentRow[]);
@@ -1743,6 +1742,35 @@ export default function EntriesPatientEntryPage() {
     );
   }
 
+  function updateMolecularTest(index: number, patch: Partial<MolecularTestRow>) {
+    setMolecular((tests) =>
+      tests.map((test, testIndex) =>
+        testIndex === index ? { ...test, ...patch } : test,
+      ),
+    );
+  }
+
+  function updateMolecularFinding(
+    testIndex: number,
+    findingIndex: number,
+    patch: Partial<MolecularFindingRow>,
+  ) {
+    setMolecular((tests) =>
+      tests.map((test, currentTestIndex) =>
+        currentTestIndex === testIndex
+          ? {
+              ...test,
+              findings: test.findings.map((finding, currentFindingIndex) =>
+                currentFindingIndex === findingIndex
+                  ? { ...finding, ...patch }
+                  : finding,
+              ),
+            }
+          : test,
+      ),
+    );
+  }
+
   function buildPayload(isDraft = false): EntriesIntakePayload {
     const optionName = (resource: string, id: string) =>
       getOptions(resource).find((option) => String(option.id) === id)?.name ||
@@ -1778,46 +1806,21 @@ export default function EntriesPatientEntryPage() {
             staged_at: row.staged_at,
           });
         });
-    const molecularTests = new Map<string, Record<string, unknown>>();
-    molecular
-      .filter((row) => row.gene || row.method)
-      .forEach((row) => {
-        const method = toNumber(row.method);
-        const specimen = toNumber(row.specimen);
-        const testedAt = row.tested_at || undefined;
-        const key = [row.panel_version || "", testedAt ?? "", method ?? "", specimen ?? ""].join("|");
-        const test = molecularTests.get(key) ?? {
-          panel_version: toNumber(row.panel_version),
-          specimen_collected_on: row.specimen_collected_on || undefined,
-          tested_on: testedAt,
-          reported_on: row.reported_on || undefined,
-          qc_status: row.qc_status || undefined,
-          laboratory: row.laboratory || undefined,
-          accession_number: row.accession_number || undefined,
-          notes: row.notes || undefined,
-          method,
-          specimen,
-          results: [] as Array<Record<string, unknown>>,
-        };
-        (test.results as Array<Record<string, unknown>>).push(
-          compact({
-            gene: toNumber(row.gene),
-            exon: toNumber(row.exon),
-            alteration_type: toNumber(row.alteration_type),
-            result: toNumber(row.result),
-            panel_target: toNumber(row.panel_target),
-            partner_gene: toNumber(row.partner_gene),
-            clinical_significance: toNumber(row.clinical_significance),
-            dna_change: row.dna_change || undefined,
-            protein_change: row.protein_change || undefined,
-            common_name: row.common_name || undefined,
-            variant_allele_frequency: toNumber(row.variant_allele_frequency),
-            copy_number: toNumber(row.copy_number),
-            notes: row.notes || undefined,
-          }),
-        );
-        molecularTests.set(key, test);
-      });
+    const molecularTests = molecular
+      .filter((test) => test.panel_version || test.method || test.findings.some((finding) => finding.gene))
+      .map((test) => compact({
+        panel_version: toNumber(test.panel_version), method: toNumber(test.method), specimen: toNumber(test.specimen),
+        specimen_collected_on: test.specimen_collected_on || undefined, tested_on: test.tested_at || undefined,
+        reported_on: test.reported_on || undefined, qc_status: test.qc_status || undefined,
+        laboratory: test.laboratory || undefined, accession_number: test.accession_number || undefined, notes: test.notes || undefined,
+        results: test.findings.filter((finding) => finding.gene || finding.panel_target).map((finding) => compact({
+          panel_target: toNumber(finding.panel_target), gene: toNumber(finding.gene), exon: toNumber(finding.exon),
+          alteration_type: toNumber(finding.alteration_type), result: toNumber(finding.result), partner_gene: toNumber(finding.partner_gene),
+          clinical_significance: toNumber(finding.clinical_significance), dna_change: finding.dna_change || undefined,
+          protein_change: finding.protein_change || undefined, common_name: finding.common_name || undefined,
+          variant_allele_frequency: toNumber(finding.variant_allele_frequency), copy_number: toNumber(finding.copy_number), notes: finding.notes || undefined,
+        })),
+      }));
     const responsePayload = (row: ResponseRow) => {
       if (
         !row.assessed_at &&
@@ -3158,136 +3161,62 @@ export default function EntriesPatientEntryPage() {
             </section>
             <RepeatableSection
               title="Molecular pathology"
-              onAdd={() => setMolecular([...molecular, blankMolecular()])}
+              onAdd={() => setMolecular([...molecular, blankMolecularTest()])}
             >
-              {molecular.map((row, index) => (
-                <div className="entry-grid repeatable-card" key={index}>
-                  <SelectField
-                    label="Panel version"
-                    value={row.panel_version}
-                    options={getOptions("molecular-panel-versions")}
-                    onChange={(value) =>
-                      setMolecular((rows) => rows.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? {
-                              ...item,
-                              panel_version: value,
-                              panel_target: "",
-                              gene: "",
-                              exon: "",
-                              alteration_type: "",
-                            }
-                          : item,
-                      ))
-                    }
-                  />
-                  <SelectField
-                    label="Panel target"
-                    value={row.panel_target}
-                    options={getOptions("molecular-panel-targets").filter(
-                      (option) => !row.panel_version || String(option.panel_version) === row.panel_version,
-                    )}
-                    onChange={(value) => {
-                      const target = getOptions("molecular-panel-targets").find(
-                        (option) => String(option.id) === value,
-                      );
-                      setMolecular((rows) => rows.map((item, itemIndex) =>
-                        itemIndex === index
-                          ? {
-                              ...item,
-                              panel_target: value,
-                              gene: String(target?.gene ?? item.gene),
-                              alteration_type: String(target?.alteration_type ?? item.alteration_type),
-                            }
-                          : item,
-                      ));
-                    }}
-                  />
-                  <TextField
-                    label="Specimen collected on"
-                    type="date"
-                    value={row.specimen_collected_on}
-                    onChange={(value) =>
-                      updateRow(setMolecular, index, "specimen_collected_on", value)
-                    }
-                  />
-                  <TextField label="Tested on" type="date" value={row.tested_at} onChange={(value) => updateRow(setMolecular, index, "tested_at", value)} />
-                  <TextField label="Reported on" type="date" value={row.reported_on} onChange={(value) => updateRow(setMolecular, index, "reported_on", value)} />
-                  <SelectField
-                    label="Method"
-                    value={row.method}
-                    options={getOptions("molecular-methods")}
-                    onChange={(value) =>
-                      updateRow(setMolecular, index, "method", value)
-                    }
-                  />
-                  <SelectField
-                    label="Specimen"
-                    value={row.specimen}
-                    options={getOptions("molecular-specimens")}
-                    onChange={(value) =>
-                      updateRow(setMolecular, index, "specimen", value)
-                    }
-                  />
-                  <SelectField
-                    label="Gene"
-                    value={row.gene}
-                    options={getOptions("molecular-genes")}
-                    onChange={(value) =>
-                      updateRow(setMolecular, index, "gene", value)
-                    }
-                  />
-                  <SelectField
-                    label="Exon"
-                    value={row.exon}
-                    options={getOptions("molecular-exons").filter(
-                      (option) => !row.gene || String(option.gene) === row.gene,
-                    )}
-                    onChange={(value) =>
-                      updateRow(setMolecular, index, "exon", value)
-                    }
-                  />
-                  <SelectField
-                    label="Alteration type"
-                    value={row.alteration_type}
-                    options={getOptions("molecular-alteration-types")}
-                    onChange={(value) =>
-                      updateRow(setMolecular, index, "alteration_type", value)
-                    }
-                    required
-                  />
-                  <SelectField
-                    label="Partner gene"
-                    value={row.partner_gene}
-                    options={getOptions("molecular-genes")}
-                    onChange={(value) => updateRow(setMolecular, index, "partner_gene", value)}
-                  />
-                  <SelectField
-                    label="Result"
-                    value={row.result}
-                    options={getOptions("molecular-results")}
-                    onChange={(value) =>
-                      updateRow(setMolecular, index, "result", value)
-                    }
-                  />
-                  <SelectField label="Clinical significance" value={row.clinical_significance} options={getOptions("molecular-clinical-significances")} onChange={(value) => updateRow(setMolecular, index, "clinical_significance", value)} />
-                  <TextField label="Laboratory" value={row.laboratory} onChange={(value) => updateRow(setMolecular, index, "laboratory", value)} />
-                  <TextField label="Accession number" value={row.accession_number} onChange={(value) => updateRow(setMolecular, index, "accession_number", value)} />
-                  <TextField label="DNA change" value={row.dna_change} onChange={(value) => updateRow(setMolecular, index, "dna_change", value)} />
-                  <TextField label="Protein change" value={row.protein_change} onChange={(value) => updateRow(setMolecular, index, "protein_change", value)} />
-                  <TextField label="Common name" value={row.common_name} onChange={(value) => updateRow(setMolecular, index, "common_name", value)} />
-                  <TextField label="Variant allele frequency (%)" type="number" value={row.variant_allele_frequency} onChange={(value) => updateRow(setMolecular, index, "variant_allele_frequency", value)} />
-                  <TextField label="Copy number" type="number" value={row.copy_number} onChange={(value) => updateRow(setMolecular, index, "copy_number", value)} />
-                  <TextArea label="Molecular notes" value={row.notes} onChange={(value) => updateRow(setMolecular, index, "notes", value)} />
-                  <RemoveButton
-                    show={molecular.length > 1}
-                    onClick={() =>
-                      setMolecular(
-                        molecular.filter((_, rowIndex) => rowIndex !== index),
-                      )
-                    }
-                  />
-                </div>
+              {molecular.map((test, testIndex) => (
+                <section className="repeatable-card" key={testIndex}>
+                  <div className="panel-heading">
+                    <div>
+                      <p className="eyebrow">Molecular test</p>
+                      <h3>Test {testIndex + 1}</h3>
+                    </div>
+                  </div>
+                  <div className="entry-grid">
+                    <SelectField label="Panel version" value={test.panel_version} options={getOptions("molecular-panel-versions")} onChange={(value) => updateMolecularTest(testIndex, { panel_version: value, findings: [blankMolecularFinding()] })} />
+                    <SelectField label="Method" value={test.method} options={getOptions("molecular-methods")} onChange={(value) => updateMolecularTest(testIndex, { method: value })} />
+                    <SelectField label="Specimen" value={test.specimen} options={getOptions("molecular-specimens")} onChange={(value) => updateMolecularTest(testIndex, { specimen: value })} />
+                    <TextField label="Specimen collected on" type="date" value={test.specimen_collected_on} onChange={(value) => updateMolecularTest(testIndex, { specimen_collected_on: value })} />
+                    <TextField label="Tested on" type="date" value={test.tested_at} onChange={(value) => updateMolecularTest(testIndex, { tested_at: value })} />
+                    <TextField label="Reported on" type="date" value={test.reported_on} onChange={(value) => updateMolecularTest(testIndex, { reported_on: value })} />
+                    <StatusField label="QC status" value={test.qc_status} choices={molecularQcStatuses} onChange={(value) => updateMolecularTest(testIndex, { qc_status: value })} />
+                    <TextField label="Laboratory" value={test.laboratory} onChange={(value) => updateMolecularTest(testIndex, { laboratory: value })} />
+                    <TextField label="Accession number" value={test.accession_number} onChange={(value) => updateMolecularTest(testIndex, { accession_number: value })} />
+                    <TextArea label="Test notes" value={test.notes} onChange={(value) => updateMolecularTest(testIndex, { notes: value })} />
+                  </div>
+                  <div className="molecular-findings-header">
+                    <div>
+                      <p className="eyebrow">Detected findings</p>
+                      <h3>Positive or detected alterations</h3>
+                    </div>
+                    <button type="button" className="secondary-button" onClick={() => updateMolecularTest(testIndex, { findings: [...test.findings, blankMolecularFinding()] })}>
+                      <Plus size={16} /> Add finding
+                    </button>
+                  </div>
+                  {test.findings.map((finding, findingIndex) => {
+                    return (
+                      <div className="entry-grid molecular-finding-card" key={findingIndex}>
+                        <SelectField label="Panel target" value={finding.panel_target} options={getOptions("molecular-panel-targets").filter((option) => !test.panel_version || String(option.panel_version) === test.panel_version)} onChange={(value) => {
+                          const target = getOptions("molecular-panel-targets").find((option) => String(option.id) === value);
+                          updateMolecularFinding(testIndex, findingIndex, { panel_target: value, gene: String(target?.gene ?? ""), exon: "", alteration_type: String(target?.alteration_type ?? "") });
+                        }} />
+                        <TextField label="Gene" value={String(getOptions("molecular-genes").find((option) => String(option.id) === finding.gene)?.name ?? "")} onChange={() => undefined} readOnly />
+                        <SelectField label="Exon" value={finding.exon} options={getOptions("molecular-exons").filter((option) => !finding.gene || String(option.gene) === finding.gene)} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { exon: value })} />
+                        <TextField label="Alteration type" value={String(getOptions("molecular-alteration-types").find((option) => String(option.id) === finding.alteration_type)?.name ?? "")} onChange={() => undefined} readOnly />
+                        <SelectField label="Result" value={finding.result} options={getOptions("molecular-results")} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { result: value })} />
+                        <SelectField label="Partner gene" value={finding.partner_gene} options={getOptions("molecular-genes")} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { partner_gene: value })} />
+                        <SelectField label="Clinical significance" value={finding.clinical_significance} options={getOptions("molecular-clinical-significances")} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { clinical_significance: value })} />
+                        <TextField label="DNA change" value={finding.dna_change} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { dna_change: value })} />
+                        <TextField label="Protein change" value={finding.protein_change} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { protein_change: value })} />
+                        <TextField label="Common name" value={finding.common_name} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { common_name: value })} />
+                        <TextField label="Variant allele frequency (%)" type="number" value={finding.variant_allele_frequency} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { variant_allele_frequency: value })} />
+                        <TextField label="Copy number" type="number" value={finding.copy_number} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { copy_number: value })} />
+                        <TextArea label="Finding notes" value={finding.notes} onChange={(value) => updateMolecularFinding(testIndex, findingIndex, { notes: value })} />
+                        <RemoveButton show={test.findings.length > 1} onClick={() => updateMolecularTest(testIndex, { findings: test.findings.filter((_, itemIndex) => itemIndex !== findingIndex) })} />
+                      </div>
+                    );
+                  })}
+                  <RemoveButton show={molecular.length > 1} onClick={() => setMolecular(molecular.filter((_, itemIndex) => itemIndex !== testIndex))} />
+                </section>
               ))}
             </RepeatableSection>
             <RepeatableSection

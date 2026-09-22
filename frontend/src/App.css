@@ -2644,6 +2644,36 @@
   gap: 0.9rem;
 }
 
+/* A molecular test can contain several findings. Keep each finding visually
+   nested without switching back to the legacy light-card palette. */
+.molecular-findings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1.15rem 0 0.8rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(116, 204, 255, 0.16);
+}
+
+.molecular-findings-header h3 {
+  margin: 0.2rem 0 0;
+  color: #e8f5ff;
+  font-size: 1rem;
+}
+
+.molecular-findings-header .eyebrow {
+  margin: 0;
+}
+
+.molecular-finding-card {
+  margin-top: 0.7rem;
+  padding: 1rem;
+  border: 1px solid rgba(116, 204, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(5, 18, 32, 0.58);
+}
+
 .entry-form-actions {
   display: flex;
   gap: 0.75rem;
