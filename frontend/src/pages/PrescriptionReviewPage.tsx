@@ -191,6 +191,19 @@ export default function PrescriptionReviewPage() {
     saveReviewMutation.mutate({ documentId: selected.id, data: reviewedData });
   }
 
+  async function correctInNewEntry() {
+    if (!selected) return;
+    setReviewError("");
+    try {
+      // The backend creates the immutable extraction snapshot on demand. The
+      // actual correction happens only in New Entry, not this workbench.
+      if (!selected.review) await startReviewMutation.mutateAsync(selected.id);
+      navigate(`/entries/new?prescription_document=${selected.id}`);
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : "Unable to open the New Entry correction form.");
+    }
+  }
+
   const reviewSections = [
     { key: "patient", step: "Patient profile and history", label: "Patient profile", fields: ["patient", "prescriber_candidates", "date_candidates"] },
     { key: "diagnosis", step: "Diagnosis and pathology", label: "Diagnosis and staging", fields: ["diagnosis_candidates", "staging_candidates"] },
@@ -253,6 +266,7 @@ export default function PrescriptionReviewPage() {
               <div><p className="eyebrow">Prescription review workbench</p><h3>{selected.original_filename}</h3><p className="hero-text">{selected.page_count || selected.pages.length || "No"} page{(selected.page_count || selected.pages.length) === 1 ? "" : "s"} · {statusLabel[selected.status]}{latestRun?.ai_model ? ` · Gemini enrichment: ${latestRun.ai_model}` : " · Deterministic extraction"}</p></div>
               {documents.length > 1 ? <select className="filter-select prescription-document-switcher" value={selected.id} onChange={(event) => setSelectedId(Number(event.target.value))} aria-label="Switch prescription document">{documents.map((document) => <option key={document.id} value={document.id}>{document.original_filename}</option>)}</select> : null}
               {selected.status === "uploaded" ? <button type="button" className="primary-button" disabled={processMutation.isPending} onClick={() => processMutation.mutate(selected.id)}><Play size={16} /> {processMutation.isPending ? "Extracting…" : "Run extraction"}</button> : null}
+              {latestRun?.status === "completed" && selected.review?.status !== "rejected" ? <button type="button" className="primary-button" disabled={startReviewMutation.isPending} onClick={() => void correctInNewEntry()}><FileText size={16} />{startReviewMutation.isPending ? "Opening…" : "Correct in New Entry"}</button> : null}
             </div>
             {processMutation.error ? <p className="prescription-error">{processMutation.error.message}</p> : null}
             {reviewIssues.length ? <details className="prescription-issues"><summary><AlertTriangle size={18} /> {reviewIssues.length} validation item{reviewIssues.length === 1 ? "" : "s"} to resolve before approval</summary><div>{reviewIssues.map((issue) => <p key={`${issue.code}-${issue.page_number ?? "document"}-${issue.message}`}>{issue.page_number ? `Page ${issue.page_number}: ` : ""}{issue.message}</p>)}</div></details> : null}

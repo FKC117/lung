@@ -9,8 +9,8 @@ from .models import PrescriptionBatchJob, PrescriptionDocument, PrescriptionRevi
 from .serializers import PrescriptionBatchJobSerializer, PrescriptionDocumentSerializer, PrescriptionReviewSerializer, PrescriptionReviewUpdateSerializer
 from .services.batch import create_batch_job, sync_batch_job
 from .services.intake_draft import build_intake_draft
-from .services.processing import process_document
 from .services.publish import publish_review
+from .tasks import process_prescription_document, sync_prescription_batch_job
 
 
 _MISSING = object()
@@ -59,9 +59,17 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         document = self.get_object()
         if document.status != PrescriptionDocument.Status.UPLOADED:
             return Response({"detail": "Only a newly uploaded document can be processed."}, status=status.HTTP_409_CONFLICT)
-        process_document(document)
-        document.refresh_from_db()
-        return Response(self.get_serializer(document).data)
+        document.status = PrescriptionDocument.Status.PROCESSING
+        document.processing_started_at = timezone.now()
+        document.save(update_fields=["status", "processing_started_at"])
+        try:
+            task = process_prescription_document.delay(document.pk)
+        except Exception as exc:
+            document.status = PrescriptionDocument.Status.UPLOADED
+            document.processing_started_at = None
+            document.save(update_fields=["status", "processing_started_at"])
+            raise ValidationError({"detail": f"Unable to queue extraction: {exc}"}) from exc
+        return Response({**self.get_serializer(document).data, "task_id": task.id}, status=status.HTTP_202_ACCEPTED)
 
     def _start_review(self, document, user):
         latest_run = document.extraction_runs.filter(status="completed").first()
@@ -138,8 +146,12 @@ class PrescriptionBatchJobViewSet(mixins.CreateModelMixin, mixins.ListModelMixin
 
     @action(detail=True, methods=["post"], url_path="sync")
     def sync(self, request, pk=None):
-        job = sync_batch_job(self.get_object())
-        return Response(self.get_serializer(job).data)
+        job = self.get_object()
+        try:
+            task = sync_prescription_batch_job.delay(job.pk)
+        except Exception as exc:
+            raise ValidationError({"detail": f"Unable to queue batch synchronization: {exc}"}) from exc
+        return Response({**self.get_serializer(job).data, "task_id": task.id}, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=["post"], url_path="approve-review")
     def approve_review(self, request, pk=None):
@@ -164,7 +176,9 @@ class PrescriptionBatchJobViewSet(mixins.CreateModelMixin, mixins.ListModelMixin
         to prefill the existing entry form, where controlled vocabulary choices
         and all remaining clinical decisions stay with the reviewer.
         """
-        review = self._existing_review(self.get_object())
+        # Opening New Entry is the correction workflow. Create its audited
+        # review snapshot on demand rather than forcing a separate editor.
+        review = self._start_review(self.get_object(), request.user)
         if not isinstance(review.reviewed_data, dict):
             raise ValidationError({"detail": "This review has no intake draft. Re-run extraction before opening New Entry."})
         # Rebuild from the reviewer-owned candidates.  The stored intake_draft

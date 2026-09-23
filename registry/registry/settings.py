@@ -154,6 +154,13 @@ CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS")
 # Cache duration, in seconds, for the read-only options catalog API.
 OPTIONS_CATALOG_CACHE_TIMEOUT = int(os.getenv("OPTIONS_CATALOG_CACHE_TIMEOUT", "900"))
 
+# Background extraction. Redis must be running at this URL in development.
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "900"))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "840"))
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration

@@ -1661,7 +1661,6 @@ export default function EntriesPatientEntryPage() {
     const handoff = prescriptionDraftQuery.data;
     if (!handoff || prescriptionHandoffApplied === handoff.review_id) return;
     setPrescriptionHandoffApplied(handoff.review_id);
-    setDraftNotice("Prescription evidence is attached to each New Entry section as read-only guidance. Nothing has been filled automatically; select and enter the confirmed registry values yourself.");
   }, [prescriptionDraftQuery.data, prescriptionHandoffApplied]);
   useEffect(() => {
     const draft = draftQuery.data?.draft;
@@ -2266,10 +2265,10 @@ export default function EntriesPatientEntryPage() {
       </Link>
       <section className="hero-panel hero-panel-tight entry-hero-compact">
         <div className="hero-copy">
-          <p className="eyebrow">New structured entry</p>
-          <h2>Create patient observation</h2>
+          <p className="eyebrow">{prescriptionDocumentId ? "Prescription correction in New Entry" : "New structured entry"}</p>
+          <h2>{prescriptionDocumentId ? "Confirm extracted prescription facts" : "Create patient observation"}</h2>
           <p className="hero-text">
-            A longitudinal patient record using the current normalized registry records.
+            {prescriptionDocumentId ? "Read the source suggestions in each section, then choose the confirmed registry values in this form." : "A longitudinal patient record using the current normalized registry records."}
           </p>
         </div>
         <div className="header-badges">
