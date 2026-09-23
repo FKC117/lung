@@ -44,6 +44,32 @@ function displayLabel(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+const entrySectionLabels: Record<string, string> = {
+  patient: "Patient profile",
+  prescriber_candidates: "Prescription context",
+  medications: "Medication prescriptions",
+  date_candidates: "Prescription dates",
+  diagnosis_candidates: "Diagnosis",
+  staging_candidates: "Clinical and pathological staging",
+  histopathology_candidates: "Histopathology",
+  molecular_candidates: "Molecular pathology",
+  ihc_candidates: "IHC cycle",
+  cancer_marker_candidates: "Cancer markers",
+  treatment_candidates: "Treatment protocols",
+  administration_candidates: "Treatment administrations",
+  response_candidates: "RECIST / iRECIST response",
+  progression_candidates: "Disease progression records",
+  survival_candidates: "Survival follow-ups",
+  surgery_candidates: "Surgery",
+  radiotherapy_candidates: "Radiotherapy",
+  chronology: "Clinical timeline",
+  observations: "Clinical observations",
+  field_tracking: "Field coverage",
+  unresolved_items: "Unresolved items",
+  form_field_candidates: "New Entry field candidates",
+  intake_draft: "New Entry draft",
+};
+
 function setReviewValue(data: ReviewData, path: Array<string | number>, nextValue: unknown): ReviewData {
   const copy = structuredClone(data) as ReviewData;
   let target: Record<string | number, unknown> = copy;
@@ -53,7 +79,7 @@ function setReviewValue(data: ReviewData, path: Array<string | number>, nextValu
 }
 
 function ReviewField({ label, value, path, onChange }: { label: string; value: unknown; path: Array<string | number>; onChange: (path: Array<string | number>, value: unknown) => void }) {
-  if (Array.isArray(value)) return <section className="prescription-review-group"><h4>{displayLabel(label)}</h4>{value.length ? value.map((item, index) => <ReviewField key={index} label={`${displayLabel(label)} ${index + 1}`} value={item} path={[...path, index]} onChange={onChange} />) : <p className="hero-text">None extracted.</p>}</section>;
+  if (Array.isArray(value)) return <section className="prescription-review-group"><h4>{displayLabel(label)}</h4>{value.length ? value.map((item, index) => <article className="prescription-candidate-card" key={index}><p className="prescription-candidate-number">Candidate {index + 1}</p><ReviewField label={displayLabel(label)} value={item} path={[...path, index]} onChange={onChange} /></article>) : <p className="hero-text">None extracted.</p>}</section>;
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
     if ("value" in record) {
@@ -163,17 +189,14 @@ export default function PrescriptionReviewPage() {
   }
 
   const reviewSections = [
-    { key: "patient", label: "Patient", fields: ["patient", "prescriber_candidates"] },
-    { key: "medicines", label: "Medicines", fields: ["medications"] },
-    { key: "dates", label: "Dates", fields: ["date_candidates"] },
-    { key: "diagnosis", label: "Diagnosis", fields: ["diagnosis_candidates", "staging_candidates"] },
-    { key: "pathology", label: "Pathology", fields: ["histopathology_candidates", "molecular_candidates", "ihc_candidates"] },
-    { key: "treatment", label: "Treatment", fields: ["treatment_candidates", "administration_candidates", "response_candidates", "progression_candidates", "survival_candidates"] },
-    { key: "procedures", label: "Procedures", fields: ["surgery_candidates", "radiotherapy_candidates", "cancer_marker_candidates"] },
-    { key: "timeline", label: "Timeline", fields: ["chronology", "observations"] },
-    { key: "coverage", label: "Field coverage", fields: ["field_tracking", "unresolved_items"] },
-    { key: "form-fields", label: "Form fields", fields: ["form_field_candidates"] },
-    { key: "intake-draft", label: "Intake draft", fields: ["intake_draft"] },
+    { key: "patient", step: "Patient profile and history", label: "Patient profile", fields: ["patient", "prescriber_candidates", "date_candidates"] },
+    { key: "diagnosis", step: "Diagnosis and pathology", label: "Diagnosis and staging", fields: ["diagnosis_candidates", "staging_candidates"] },
+    { key: "pathology", step: "Diagnosis and pathology", label: "Pathology and biomarkers", fields: ["histopathology_candidates", "molecular_candidates", "ihc_candidates", "cancer_marker_candidates"] },
+    { key: "treatment", step: "Treatment and outcomes", label: "Treatment protocols", fields: ["medications", "treatment_candidates", "administration_candidates"] },
+    { key: "procedures", step: "Treatment and outcomes", label: "Surgery and radiotherapy", fields: ["surgery_candidates", "radiotherapy_candidates"] },
+    { key: "outcomes", step: "Treatment and outcomes", label: "Response and follow-up", fields: ["response_candidates", "progression_candidates", "survival_candidates", "chronology"] },
+    { key: "coverage", step: "Review safeguards", label: "Coverage and unresolved items", fields: ["field_tracking", "unresolved_items"] },
+    { key: "intake-draft", step: "New Entry handoff", label: "New Entry form draft", fields: ["form_field_candidates", "intake_draft"] },
   ].filter((section) => section.fields.some((field) => {
     const value = reviewedData[field];
     return Array.isArray(value) ? value.length > 0 : Boolean(value && typeof value === "object" && Object.keys(value as object).length);
@@ -224,11 +247,12 @@ export default function PrescriptionReviewPage() {
         <section className="panel prescription-review">
           {!selected ? <div className="prescription-empty"><FileText size={34} /><h3>Select or upload a prescription</h3><p>Its OCR text, extraction result, and validation warnings will appear here.</p></div> : <>
             <div className="panel-heading">
-              <div><p className="eyebrow">2. Extraction and review</p><h3>{selected.original_filename}</h3><p className="hero-text">{selected.page_count || selected.pages.length || "No"} page{(selected.page_count || selected.pages.length) === 1 ? "" : "s"} · {statusLabel[selected.status]}</p></div>
+              <div><p className="eyebrow">Prescription review workbench</p><h3>{selected.original_filename}</h3><p className="hero-text">{selected.page_count || selected.pages.length || "No"} page{(selected.page_count || selected.pages.length) === 1 ? "" : "s"} · {statusLabel[selected.status]}</p></div>
+              {documents.length > 1 ? <select className="filter-select prescription-document-switcher" value={selected.id} onChange={(event) => setSelectedId(Number(event.target.value))} aria-label="Switch prescription document">{documents.map((document) => <option key={document.id} value={document.id}>{document.original_filename}</option>)}</select> : null}
               {selected.status === "uploaded" ? <button type="button" className="primary-button" disabled={processMutation.isPending} onClick={() => processMutation.mutate(selected.id)}><Play size={16} /> {processMutation.isPending ? "Extracting…" : "Run extraction"}</button> : null}
             </div>
             {processMutation.error ? <p className="prescription-error">{processMutation.error.message}</p> : null}
-            {reviewIssues.length ? <section className="prescription-issues"><AlertTriangle size={18} /><div><strong>Validation needs review</strong>{reviewIssues.map((issue) => <p key={`${issue.code}-${issue.page_number ?? "document"}-${issue.message}`}>{issue.page_number ? `Page ${issue.page_number}: ` : ""}{issue.message}</p>)}</div></section> : null}
+            {reviewIssues.length ? <details className="prescription-issues"><summary><AlertTriangle size={18} /> {reviewIssues.length} validation item{reviewIssues.length === 1 ? "" : "s"} to resolve before approval</summary><div>{reviewIssues.map((issue) => <p key={`${issue.code}-${issue.page_number ?? "document"}-${issue.message}`}>{issue.page_number ? `Page ${issue.page_number}: ` : ""}{issue.message}</p>)}</div></details> : null}
             <div className="prescription-split-view">
               <section className="prescription-source">
                 <div className="prescription-subheading"><div><h3>Source evidence</h3><p className="hero-text">Read pages in prescription order while reviewing.</p></div></div>
@@ -245,7 +269,7 @@ export default function PrescriptionReviewPage() {
                   <section className="prescription-guided-review">
                     <div><p className="eyebrow">3. Correct extracted facts</p><h4>Review one clinical area at a time</h4><p className="entry-field-help">Warnings are shown separately and are never converted into clinical facts.</p></div>
                     {reviewSections.length ? <div className="prescription-review-tabs" role="tablist" aria-label="Review sections">{reviewSections.map((section) => <button type="button" role="tab" aria-selected={activeReviewSection?.key === section.key} className={activeReviewSection?.key === section.key ? "is-active" : ""} key={section.key} onClick={() => setReviewTab(section.key)}>{section.label}</button>)}</div> : <p className="hero-text">No supported clinical facts were extracted. Review the source and record a rejection or note.</p>}
-                    {activeReviewSection ? <div className="prescription-review-step"><div className="prescription-step-title"><span>Step {reviewSections.findIndex((section) => section.key === activeReviewSection.key) + 1} of {reviewSections.length}</span><strong>{activeReviewSection.label}</strong></div>{activeReviewSection.fields.map((field) => reviewedData[field] !== undefined ? <ReviewField key={field} label={field} value={reviewedData[field]} path={[field]} onChange={(path, value) => setReviewedData((current) => setReviewValue(current, path, value))} /> : null)}</div> : null}
+                    {activeReviewSection ? <div className="prescription-review-step"><div className="prescription-step-title"><span>{activeReviewSection.step} · section {reviewSections.findIndex((section) => section.key === activeReviewSection.key) + 1} of {reviewSections.length}</span><strong>{activeReviewSection.label}</strong></div>{activeReviewSection.fields.map((field) => reviewedData[field] !== undefined ? <ReviewField key={field} label={entrySectionLabels[field] ?? field} value={reviewedData[field]} path={[field]} onChange={(path, value) => setReviewedData((current) => setReviewValue(current, path, value))} /> : null)}</div> : null}
                   </section>
                   {reviewError ? <p className="prescription-error">{reviewError}</p> : null}
                   {(saveReviewMutation.error || approveReviewMutation.error || reopenReviewMutation.error || rejectReviewMutation.error) ? <p className="prescription-error">{(saveReviewMutation.error || approveReviewMutation.error || reopenReviewMutation.error || rejectReviewMutation.error)?.message}</p> : null}

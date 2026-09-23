@@ -44,10 +44,24 @@ MEDICATION_LINE = re.compile(
 FREQUENCY = re.compile(r"\b(?:od|bd|tds|qid|hs|sos|stat|once\s+(?:a\s+)?daily|twice\s+(?:a\s+)?daily|three\s+times\s+(?:a\s+)?daily|every\s+\d+\s*(?:h|hr|hours?))\b|\b\d\s*[+x]\s*\d\s*[+x]\s*\d(?:\s*[+x]\s*\d)?\b", re.IGNORECASE)
 
 
+def evidence_excerpt(text, start, end, radius=140):
+    """Return a bounded, readable excerpt without cutting words in half."""
+    left = max(0, start - radius)
+    right = min(len(text), end + radius)
+    if left:
+        while left < start and not text[left].isspace():
+            left += 1
+    if right < len(text):
+        while right > end and not text[right - 1].isspace():
+            right -= 1
+    excerpt = text[left:right].strip()
+    return f"{'… ' if left else ''}{excerpt}{' …' if right < len(text) else ''}"
+
+
 def evidence(page, text, start, end, value, confidence):
     return {
         "value": value,
-        "source_text": text[max(0, start - 80):min(len(text), end + 80)].strip(),
+        "source_text": evidence_excerpt(text, start, end),
         "page": page,
         "confidence": confidence,
     }

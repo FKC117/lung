@@ -154,8 +154,8 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="publish-review")
     def publish_review(self, request, pk=None):
         review = self._existing_review(self.get_object())
-        observation = publish_review(review, request.user)
-        return Response({"review": PrescriptionReviewSerializer(review).data, "observation_id": observation.pk}, status=status.HTTP_201_CREATED)
+        observation, published = publish_review(review, request.user)
+        return Response({"review": PrescriptionReviewSerializer(review).data, "observation_id": observation.pk, "published": published}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="reject-review")
     def reject_review(self, request, pk=None):
