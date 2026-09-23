@@ -38,8 +38,8 @@ class PrescriptionReviewSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PrescriptionReview
-        fields = ("id", "selected_patient", "status", "reviewed_data", "notes", "assigned_to", "reviewed_by", "reviewed_at", "created_at", "updated_at", "changes")
-        read_only_fields = ("status", "assigned_to", "reviewed_by", "reviewed_at", "created_at", "updated_at", "changes")
+        fields = ("id", "selected_patient", "status", "reviewed_data", "notes", "assigned_to", "reviewed_by", "reviewed_at", "published_at", "published_by", "created_at", "updated_at", "changes")
+        read_only_fields = ("status", "assigned_to", "reviewed_by", "reviewed_at", "published_at", "published_by", "created_at", "updated_at", "changes")
 
 
 class PrescriptionReviewUpdateSerializer(serializers.Serializer):

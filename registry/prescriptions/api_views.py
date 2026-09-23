@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from .models import PrescriptionDocument, PrescriptionReview, PrescriptionReviewChange
 from .serializers import PrescriptionDocumentSerializer, PrescriptionReviewSerializer, PrescriptionReviewUpdateSerializer
 from .services.processing import process_document
+from .services.publish import publish_review
 
 
 _MISSING = object()
@@ -149,6 +150,12 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
                 PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reopen_reason", previous_value=None, new_value=reason),
             ])
         return Response(PrescriptionReviewSerializer(review).data)
+
+    @action(detail=True, methods=["post"], url_path="publish-review")
+    def publish_review(self, request, pk=None):
+        review = self._existing_review(self.get_object())
+        observation = publish_review(review, request.user)
+        return Response({"review": PrescriptionReviewSerializer(review).data, "observation_id": observation.pk}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="reject-review")
     def reject_review(self, request, pk=None):

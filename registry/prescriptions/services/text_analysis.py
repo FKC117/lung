@@ -5,8 +5,16 @@ from datetime import date
 from django.conf import settings
 
 from prescriptions.services.chronology import validate_chronology
+from prescriptions.services.diagnosis import extract_diagnosis_and_staging
+from prescriptions.services.field_tracking import track_fields
+from prescriptions.services.histopathology import extract_histopathology
+from prescriptions.services.molecular import extract_molecular_and_ihc
 from prescriptions.services.option_resolver import resolve_medications
 from prescriptions.services.patient_resolver import find_patient_candidates
+from prescriptions.services.treatment_outcomes import extract_treatment_and_outcomes
+from prescriptions.services.procedures import extract_procedure_evidence
+from prescriptions.services.form_fields import extract_form_fields
+from prescriptions.services.intake_draft import build_intake_draft
 
 
 MONTHS = {
@@ -137,6 +145,12 @@ def analyze_text(pages):
     identifiers, phones, doctors, medications = find_explicit_entities(pages)
     resolve_medications(medications)
     patient_candidates = find_patient_candidates(identifiers, phones)
+    diagnoses, staging = extract_diagnosis_and_staging(pages)
+    histopathology = extract_histopathology(pages)
+    molecular, ihc, molecular_warnings = extract_molecular_and_ihc(pages)
+    treatments, responses, progressions, followups = extract_treatment_and_outcomes(pages)
+    procedures = extract_procedure_evidence(pages)
+    form_fields = extract_form_fields(pages)
     resolved = sorted((item for item in dates if item["normalized_date"]), key=lambda item: (item["normalized_date"], item["page"]))
     warnings = [item["warning"] for item in dates if item.get("warning")]
     if resolved:
@@ -146,9 +160,22 @@ def analyze_text(pages):
         "observations": [],
         "prescriber_candidates": doctors,
         "medications": medications,
+        "diagnosis_candidates": diagnoses,
+        "staging_candidates": staging,
+        "histopathology_candidates": histopathology,
+        "molecular_candidates": molecular,
+        "ihc_candidates": ihc,
+        "treatment_candidates": treatments,
+        "response_candidates": responses,
+        "progression_candidates": progressions,
+        "survival_candidates": followups,
+        **procedures,
+        "form_field_candidates": form_fields,
         "date_candidates": dates,
         "chronology": [{"sequence": index + 1, **item} for index, item in enumerate(resolved)],
         "unresolved_items": [],
-        "warnings": warnings + (["Medication lines describe prescriptions only; they do not prove drug administration."] if medications else []) + (["Patient candidates are suggestions only; a reviewer must confirm the patient."] if patient_candidates else []),
+        "warnings": warnings + molecular_warnings + (["Medication lines describe prescriptions only; they do not prove drug administration."] if medications else []) + (["Patient candidates are suggestions only; a reviewer must confirm the patient."] if patient_candidates else []),
     }
-    return validate_chronology(result)
+    result = track_fields(validate_chronology(result))
+    result["intake_draft"] = build_intake_draft(result)
+    return result

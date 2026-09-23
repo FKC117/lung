@@ -166,8 +166,14 @@ export default function PrescriptionReviewPage() {
     { key: "patient", label: "Patient", fields: ["patient", "prescriber_candidates"] },
     { key: "medicines", label: "Medicines", fields: ["medications"] },
     { key: "dates", label: "Dates", fields: ["date_candidates"] },
+    { key: "diagnosis", label: "Diagnosis", fields: ["diagnosis_candidates", "staging_candidates"] },
+    { key: "pathology", label: "Pathology", fields: ["histopathology_candidates", "molecular_candidates", "ihc_candidates"] },
+    { key: "treatment", label: "Treatment", fields: ["treatment_candidates", "administration_candidates", "response_candidates", "progression_candidates", "survival_candidates"] },
+    { key: "procedures", label: "Procedures", fields: ["surgery_candidates", "radiotherapy_candidates", "cancer_marker_candidates"] },
     { key: "timeline", label: "Timeline", fields: ["chronology", "observations"] },
-    { key: "other", label: "Other facts", fields: ["unresolved_items"] },
+    { key: "coverage", label: "Field coverage", fields: ["field_tracking", "unresolved_items"] },
+    { key: "form-fields", label: "Form fields", fields: ["form_field_candidates"] },
+    { key: "intake-draft", label: "Intake draft", fields: ["intake_draft"] },
   ].filter((section) => section.fields.some((field) => {
     const value = reviewedData[field];
     return Array.isArray(value) ? value.length > 0 : Boolean(value && typeof value === "object" && Object.keys(value as object).length);

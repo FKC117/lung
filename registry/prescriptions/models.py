@@ -2,6 +2,8 @@ import hashlib
 
 from django.conf import settings
 from django.db import models
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
 
 
 class PrescriptionDocument(models.Model):
@@ -123,6 +125,8 @@ class PrescriptionReview(models.Model):
     assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_prescription_reviews")
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="completed_prescription_reviews")
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    published_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="published_prescription_reviews")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -140,3 +144,18 @@ class PrescriptionReviewChange(models.Model):
 
     class Meta:
         ordering = ("-changed_at", "-id")
+
+class RecordProvenance(models.Model):
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveBigIntegerField()
+    record = GenericForeignKey("content_type", "object_id")
+    document = models.ForeignKey(PrescriptionDocument, on_delete=models.PROTECT, related_name="published_provenance")
+    extraction_run = models.ForeignKey(ExtractionRun, on_delete=models.PROTECT, null=True, blank=True)
+    source_text = models.TextField(blank=True)
+    source_page = models.PositiveIntegerField(null=True, blank=True)
+    field_path = models.CharField(max_length=255, blank=True)
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    published_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["content_type", "object_id"])]
