@@ -1935,6 +1935,13 @@ export function approvePrescriptionReview(documentId: number) {
   );
 }
 
+export function reopenPrescriptionReview(documentId: number, reason: string) {
+  return request<PrescriptionReview>(
+    `/api/prescriptions/documents/${documentId}/reopen-review/`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
+}
+
 export function rejectPrescriptionReview(documentId: number, reason: string) {
   return request<PrescriptionReview>(
     `/api/prescriptions/documents/${documentId}/reject-review/`,

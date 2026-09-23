@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, FileText, Play, Save, ShieldCheck, Upload, XCircle } from "lucide-react";
+import { AlertTriangle, Check, ExternalLink, FileText, Play, Save, ShieldCheck, Upload, XCircle } from "lucide-react";
 
 import {
   type PrescriptionDocument,
@@ -8,6 +8,7 @@ import {
   fetchPrescriptionDocuments,
   processPrescriptionDocument,
   rejectPrescriptionReview,
+  reopenPrescriptionReview,
   startPrescriptionReview,
   updatePrescriptionReview,
   uploadPrescriptionDocument,
@@ -22,6 +23,19 @@ const statusLabel: Record<PrescriptionDocument["status"], string> = {
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
+}
+
+function reviewMediaUrl(url: string) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    // Django serializers return an absolute development media URL. Route it
+    // through Vite so the embedded PDF has the same browser origin as the UI.
+    return parsed.pathname.startsWith("/media/")
+      ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+      : url;
+  } catch {
+    return url;
+  }
 }
 
 type ReviewData = Record<string, unknown>;
@@ -55,12 +69,15 @@ export default function PrescriptionReviewPage() {
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [selectedPage, setSelectedPage] = useState(0);
   const [reviewedData, setReviewedData] = useState<ReviewData>({});
   const [reviewNotes, setReviewNotes] = useState("");
   const [patientId, setPatientId] = useState("");
   const [reviewError, setReviewError] = useState("");
   const [readyToApprove, setReadyToApprove] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const [reviewTab, setReviewTab] = useState("patient");
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [pdfLoadError, setPdfLoadError] = useState(false);
   const documentsQuery = useQuery({ queryKey: ["prescription-documents"], queryFn: fetchPrescriptionDocuments });
   const documents = documentsQuery.data ?? [];
   const selected = useMemo(
@@ -68,7 +85,7 @@ export default function PrescriptionReviewPage() {
     [documents, selectedId],
   );
   const latestRun = selected?.extraction_runs[0];
-  const page = selected?.pages[selectedPage] ?? selected?.pages[0];
+  const isPdf = Boolean(selected?.original_filename.toLowerCase().endsWith(".pdf"));
   const reviewIssues = useMemo(() => {
     const issues = [...(selected?.issues ?? []), ...(latestRun?.issues ?? [])];
     return issues.filter(
@@ -81,7 +98,6 @@ export default function PrescriptionReviewPage() {
     );
   }, [latestRun?.issues, selected?.issues]);
 
-  useEffect(() => setSelectedPage(0), [selected?.id]);
   useEffect(() => {
     const data = selected?.review?.reviewed_data ?? latestRun?.structured_data ?? {};
     setReviewedData(data);
@@ -89,7 +105,34 @@ export default function PrescriptionReviewPage() {
     setPatientId(selected?.review?.selected_patient ? String(selected.review.selected_patient) : "");
     setReviewError("");
     setReadyToApprove(false);
+    setReopenReason("");
+    setReviewTab("patient");
   }, [selected?.id, selected?.review?.updated_at, latestRun?.id]);
+  useEffect(() => {
+    if (!isPdf || !selected?.file) {
+      setPdfPreviewUrl(null);
+      setPdfLoadError(false);
+      return;
+    }
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setPdfPreviewUrl(null);
+    setPdfLoadError(false);
+    void fetch(reviewMediaUrl(selected.file), { credentials: "include" })
+      .then((response) => {
+        if (!response.ok) throw new Error("The original PDF could not be loaded.");
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        if (!cancelled) setPdfPreviewUrl(objectUrl);
+      })
+      .catch(() => { if (!cancelled) setPdfLoadError(true); });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [isPdf, selected?.file]);
 
   const uploadMutation = useMutation({
     mutationFn: () => uploadPrescriptionDocument(file!),
@@ -110,6 +153,7 @@ export default function PrescriptionReviewPage() {
   const startReviewMutation = useMutation({ mutationFn: startPrescriptionReview, onSuccess: refreshDocuments });
   const saveReviewMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: number; data: Record<string, unknown> }) => updatePrescriptionReview(documentId, { reviewed_data: data, notes: reviewNotes, selected_patient: patientId ? Number(patientId) : null }), onSuccess: refreshDocuments });
   const approveReviewMutation = useMutation({ mutationFn: approvePrescriptionReview, onSuccess: refreshDocuments });
+  const reopenReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => reopenPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
   const rejectReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => rejectPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
 
   function saveReview() {
@@ -117,6 +161,18 @@ export default function PrescriptionReviewPage() {
     setReviewError("");
     saveReviewMutation.mutate({ documentId: selected.id, data: reviewedData });
   }
+
+  const reviewSections = [
+    { key: "patient", label: "Patient", fields: ["patient", "prescriber_candidates"] },
+    { key: "medicines", label: "Medicines", fields: ["medications"] },
+    { key: "dates", label: "Dates", fields: ["date_candidates"] },
+    { key: "timeline", label: "Timeline", fields: ["chronology", "observations"] },
+    { key: "other", label: "Other facts", fields: ["unresolved_items"] },
+  ].filter((section) => section.fields.some((field) => {
+    const value = reviewedData[field];
+    return Array.isArray(value) ? value.length > 0 : Boolean(value && typeof value === "object" && Object.keys(value as object).length);
+  }));
+  const activeReviewSection = reviewSections.find((section) => section.key === reviewTab) ?? reviewSections[0];
 
   return (
     <section className="page-grid prescription-workspace">
@@ -169,10 +225,9 @@ export default function PrescriptionReviewPage() {
             {reviewIssues.length ? <section className="prescription-issues"><AlertTriangle size={18} /><div><strong>Validation needs review</strong>{reviewIssues.map((issue) => <p key={`${issue.code}-${issue.page_number ?? "document"}-${issue.message}`}>{issue.page_number ? `Page ${issue.page_number}: ` : ""}{issue.message}</p>)}</div></section> : null}
             <div className="prescription-split-view">
               <section className="prescription-source">
-                <div className="prescription-subheading"><h3>Source evidence</h3>{selected.pages.length > 1 ? <select className="filter-select" value={selectedPage} onChange={(event) => setSelectedPage(Number(event.target.value))}>{selected.pages.map((item, index) => <option value={index} key={item.id}>Page {item.page_number}</option>)}</select> : null}</div>
-                {page?.image ? <img className="prescription-page-image" src={page.image} alt={`Prescription page ${page.page_number}`} /> : null}
-                <pre className="prescription-ocr-text">{page?.cleaned_text || page?.raw_text || "OCR text will appear after extraction."}</pre>
-                {page?.ocr_confidence !== null && page?.ocr_confidence !== undefined ? <p className="hero-text">OCR confidence: {Math.round(page.ocr_confidence * 100)}%</p> : null}
+                <div className="prescription-subheading"><div><h3>Source evidence</h3><p className="hero-text">Read pages in prescription order while reviewing.</p></div></div>
+                {isPdf && selected?.file ? <details className="prescription-original-file" open><summary>Original prescription PDF</summary><a className="secondary-button prescription-open-file" href={reviewMediaUrl(selected.file)} target="_blank" rel="noreferrer"><ExternalLink size={16} />Open in new tab</a>{pdfPreviewUrl ? <iframe title={`Original prescription: ${selected.original_filename}`} src={`${pdfPreviewUrl}#view=FitH`} className="prescription-pdf-viewer" /> : <p className="hero-text">{pdfLoadError ? "The inline preview is unavailable. Open the original PDF in a new tab." : "Loading original PDF…"}</p>}</details> : null}
+                {selected.pages.length ? <div className="prescription-source-pages">{selected.pages.map((item) => <article className="prescription-source-page" key={item.id}><div className="prescription-source-page-heading"><strong>Page {item.page_number}</strong>{item.ocr_confidence !== null && item.ocr_confidence !== undefined ? <span>OCR confidence {Math.round(item.ocr_confidence * 100)}%</span> : null}</div>{item.image ? <img className="prescription-page-image" src={reviewMediaUrl(item.image)} alt={`Prescription page ${item.page_number}`} /> : null}<pre className="prescription-ocr-text">{item.cleaned_text || item.raw_text || "No text was extracted from this page."}</pre></article>)}</div> : <p className="hero-text">Source pages will appear after extraction.</p>}
               </section>
               <section className="prescription-extraction">
                 <div className="prescription-subheading"><h3>Human review</h3><span className={`prescription-confidence ${selected.review?.status === "approved" ? "is-ready" : ""}`}>{selected.review?.status?.replaceAll("_", " ") ?? (latestRun?.status === "completed" ? "Ready to start" : "Awaiting extraction")}</span></div>
@@ -181,11 +236,16 @@ export default function PrescriptionReviewPage() {
                 {selected.review ? <div className="prescription-review-editor">
                   <label className="filter-field"><span>Matched patient ID</span><input className="auth-input" inputMode="numeric" value={patientId} onChange={(event) => setPatientId(event.target.value.replace(/[^0-9]/g, ""))} disabled={selected.review.status === "approved" || selected.review.status === "rejected"} placeholder="Leave blank if not identified" /><p className="entry-field-help">Only enter a confirmed existing patient ID.</p></label>
                   <label className="filter-field"><span>Reviewer notes</span><textarea className="auth-input entry-textarea" value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} disabled={selected.review.status === "approved" || selected.review.status === "rejected"} placeholder="Record corrections, uncertainty, or rejection reason." /></label>
-                  <section className="prescription-guided-review"><div><p className="eyebrow">Correct extracted facts</p><h4>Review each value against the source evidence</h4></div>{Object.entries(reviewedData).map(([key, value]) => <ReviewField key={key} label={key} value={value} path={[key]} onChange={(path, value) => setReviewedData((current) => setReviewValue(current, path, value))} />)}<p className="entry-field-help">Each field shows its source page and confidence where available. Changes affect the review copy only.</p></section>
+                  <section className="prescription-guided-review">
+                    <div><p className="eyebrow">3. Correct extracted facts</p><h4>Review one clinical area at a time</h4><p className="entry-field-help">Warnings are shown separately and are never converted into clinical facts.</p></div>
+                    {reviewSections.length ? <div className="prescription-review-tabs" role="tablist" aria-label="Review sections">{reviewSections.map((section) => <button type="button" role="tab" aria-selected={activeReviewSection?.key === section.key} className={activeReviewSection?.key === section.key ? "is-active" : ""} key={section.key} onClick={() => setReviewTab(section.key)}>{section.label}</button>)}</div> : <p className="hero-text">No supported clinical facts were extracted. Review the source and record a rejection or note.</p>}
+                    {activeReviewSection ? <div className="prescription-review-step"><div className="prescription-step-title"><span>Step {reviewSections.findIndex((section) => section.key === activeReviewSection.key) + 1} of {reviewSections.length}</span><strong>{activeReviewSection.label}</strong></div>{activeReviewSection.fields.map((field) => reviewedData[field] !== undefined ? <ReviewField key={field} label={field} value={reviewedData[field]} path={[field]} onChange={(path, value) => setReviewedData((current) => setReviewValue(current, path, value))} /> : null)}</div> : null}
+                  </section>
                   {reviewError ? <p className="prescription-error">{reviewError}</p> : null}
-                  {(saveReviewMutation.error || approveReviewMutation.error || rejectReviewMutation.error) ? <p className="prescription-error">{(saveReviewMutation.error || approveReviewMutation.error || rejectReviewMutation.error)?.message}</p> : null}
+                  {(saveReviewMutation.error || approveReviewMutation.error || reopenReviewMutation.error || rejectReviewMutation.error) ? <p className="prescription-error">{(saveReviewMutation.error || approveReviewMutation.error || reopenReviewMutation.error || rejectReviewMutation.error)?.message}</p> : null}
                   {selected.review.status !== "approved" && selected.review.status !== "rejected" ? <div className="prescription-review-actions"><button type="button" className="secondary-button" disabled={saveReviewMutation.isPending} onClick={saveReview}><Save size={16} />{saveReviewMutation.isPending ? "Saving…" : "Save review"}</button><button type="button" className="secondary-button" onClick={() => setReadyToApprove(true)}>Finish corrections</button><button type="button" className="secondary-button prescription-reject-button" disabled={rejectReviewMutation.isPending} onClick={() => { if (!reviewNotes.trim()) { setReviewError("Enter a rejection reason in reviewer notes before rejecting."); return; } rejectReviewMutation.mutate({ documentId: selected.id, reason: reviewNotes.trim() }); }}><XCircle size={16} />Reject review</button></div> : null}
                   {readyToApprove && selected.review.status !== "approved" && selected.review.status !== "rejected" ? <section className="prescription-approval-step"><strong>Final check</strong><p>Save corrections before approval. Approval locks this review but does not publish clinical records.</p><button type="button" className="primary-button" disabled={approveReviewMutation.isPending || saveReviewMutation.isPending} onClick={() => approveReviewMutation.mutate(selected.id)}><Check size={16} />{approveReviewMutation.isPending ? "Approving…" : "Approve completed review"}</button></section> : null}
+                  {selected.review.status === "approved" ? <section className="prescription-approval-step"><strong>Approved review</strong><p>If a correction is needed, reopen this review with an auditable reason. It will return to in-review status.</p><label className="filter-field"><span>Reason for reopening</span><textarea className="auth-input entry-textarea" value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Explain what must be corrected." /></label><button type="button" className="secondary-button" disabled={reopenReviewMutation.isPending} onClick={() => { if (!reopenReason.trim()) { setReviewError("Enter a reason before reopening this review."); return; } reopenReviewMutation.mutate({ documentId: selected.id, reason: reopenReason.trim() }); }}><Save size={16} />{reopenReviewMutation.isPending ? "Reopening…" : "Reopen for correction"}</button></section> : null}
                   {selected.review.changes.length ? <details className="prescription-audit"><summary>{selected.review.changes.length} audited change{selected.review.changes.length === 1 ? "" : "s"}</summary>{selected.review.changes.map((change) => <p key={change.id}>{change.field_path} · {formatDate(change.changed_at)}</p>)}</details> : null}
                 </div> : null}
                 {!selected.review && latestRun?.status !== "completed" ? <p className="hero-text">Run extraction to receive reviewable, source-linked clinical proposals. Approval never publishes clinical records.</p> : null}

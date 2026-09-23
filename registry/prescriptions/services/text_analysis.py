@@ -6,6 +6,7 @@ from django.conf import settings
 
 from prescriptions.services.chronology import validate_chronology
 from prescriptions.services.option_resolver import resolve_medications
+from prescriptions.services.patient_resolver import find_patient_candidates
 
 
 MONTHS = {
@@ -21,9 +22,10 @@ NAMED_DATE = re.compile(
     re.IGNORECASE,
 )
 IDENTIFIER = re.compile(
-    r"\b(?P<label>registration|reg(?:istration)?\s*(?:no|number)?|patient\s*(?:id|no|number)?|mrn|uhid)\s*[:#-]?\s*(?P<value>[A-Z0-9][A-Z0-9/-]{2,})\b",
+    r"\b(?P<label>h\.?\s*n\.?|registration|reg(?:istration)?\s*(?:no|number)?|patient\s*(?:id|no|number)?|mrn|uhid)(?:\s*(?:no|number))?\s*[:#-]?\s*(?P<value>[A-Z0-9][A-Z0-9/-]{2,})\b",
     re.IGNORECASE,
 )
+PHONE = re.compile(r"(?<!\d)(?P<value>(?:\+?880[ -]?|0)1\d(?:[ -]?\d){8})(?!\d)")
 DOCTOR_LINE = re.compile(r"^\s*(?:consultant\s+)?dr\.?\s*(?P<name>[A-Za-z][A-Za-z .'-]{2,80})\s*$", re.IGNORECASE)
 MEDICATION_LINE = re.compile(
     r"^\s*(?:(?P<form>tab(?:let)?|cap(?:sule)?|inj(?:ection)?|syp(?:rup)?|drop(?:s)?|neb(?:uliser)?)\.?\s+)?"
@@ -95,13 +97,18 @@ def line_evidence(page, line, value, confidence):
 
 
 def find_explicit_entities(pages):
-    identifiers, doctors, medications = [], [], []
+    identifiers, phones, doctors, medications = [], [], [], []
     for page in pages:
         text = page.cleaned_text or page.raw_text
         for match in IDENTIFIER.finditer(text):
             item = evidence(page.page_number, text, match.start("value"), match.end("value"), match.group("value"), 0.98)
-            item["identifier_type"] = match.group("label").lower()
+            label = match.group("label").lower().replace(".", "").replace(" ", "")
+            item["identifier_type"] = "hn" if label == "hn" else ("registration_no" if label.startswith("reg") else label)
+            if item["identifier_type"] in {"hn", "registration_no"}:
+                item["patient_field"] = "registration_no"
             identifiers.append(item)
+        for match in PHONE.finditer(text):
+            phones.append(evidence(page.page_number, text, match.start("value"), match.end("value"), match.group("value"), 0.96))
         for line in text.splitlines():
             doctor = DOCTOR_LINE.match(line)
             if doctor:
@@ -121,26 +128,27 @@ def find_explicit_entities(pages):
                 "order_status": line_evidence(page, line, "prescribed", 0.99),
             }
             medications.append(item)
-    return identifiers, doctors, medications
+    return identifiers, phones, doctors, medications
 
 
 def analyze_text(pages):
     """Return explicit dates and their sortable order; no clinical meaning is inferred."""
     dates = find_dates(pages)
-    identifiers, doctors, medications = find_explicit_entities(pages)
+    identifiers, phones, doctors, medications = find_explicit_entities(pages)
     resolve_medications(medications)
+    patient_candidates = find_patient_candidates(identifiers, phones)
     resolved = sorted((item for item in dates if item["normalized_date"]), key=lambda item: (item["normalized_date"], item["page"]))
     warnings = [item["warning"] for item in dates if item.get("warning")]
     if resolved:
         warnings.append("Chronology orders explicit document dates only; it does not infer treatment, administration, diagnosis, progression, or event meaning.")
     result = {
-        "patient": {"identifiers": identifiers},
+        "patient": {"identifiers": identifiers, "phones": phones, "match_candidates": patient_candidates},
         "observations": [],
         "prescriber_candidates": doctors,
         "medications": medications,
         "date_candidates": dates,
         "chronology": [{"sequence": index + 1, **item} for index, item in enumerate(resolved)],
         "unresolved_items": [],
-        "warnings": warnings + (["Medication lines describe prescriptions only; they do not prove drug administration."] if medications else []),
+        "warnings": warnings + (["Medication lines describe prescriptions only; they do not prove drug administration."] if medications else []) + (["Patient candidates are suggestions only; a reviewer must confirm the patient."] if patient_candidates else []),
     }
     return validate_chronology(result)

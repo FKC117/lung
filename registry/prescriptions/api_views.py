@@ -127,6 +127,29 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="approved")
         return Response(PrescriptionReviewSerializer(review).data)
 
+    @action(detail=True, methods=["post"], url_path="reopen-review")
+    def reopen_review(self, request, pk=None):
+        review = self._existing_review(self.get_object())
+        reason = request.data.get("reason", "").strip()
+        if review.status != PrescriptionReview.Status.APPROVED:
+            raise ValidationError({"detail": "Only an approved review can be reopened."})
+        if not reason:
+            raise ValidationError({"reason": "A reopen reason is required."})
+        previous_reviewer = review.reviewed_by_id
+        previous_reviewed_at = review.reviewed_at.isoformat() if review.reviewed_at else None
+        with transaction.atomic():
+            review.status = PrescriptionReview.Status.IN_REVIEW
+            review.reviewed_by = None
+            review.reviewed_at = None
+            review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
+            PrescriptionReviewChange.objects.bulk_create([
+                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="status", previous_value="approved", new_value="in_review"),
+                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reviewed_by", previous_value=previous_reviewer, new_value=None),
+                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reviewed_at", previous_value=previous_reviewed_at, new_value=None),
+                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reopen_reason", previous_value=None, new_value=reason),
+            ])
+        return Response(PrescriptionReviewSerializer(review).data)
+
     @action(detail=True, methods=["post"], url_path="reject-review")
     def reject_review(self, request, pk=None):
         review = self._existing_review(self.get_object())
