@@ -1,12 +1,14 @@
-from rest_framework import permissions, status, viewsets
+from rest_framework import mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import MethodNotAllowed, NotFound, ValidationError
 from rest_framework.response import Response
 
-from .models import PrescriptionDocument, PrescriptionReview, PrescriptionReviewChange
-from .serializers import PrescriptionDocumentSerializer, PrescriptionReviewSerializer, PrescriptionReviewUpdateSerializer
+from .models import PrescriptionBatchJob, PrescriptionDocument, PrescriptionReview, PrescriptionReviewChange
+from .serializers import PrescriptionBatchJobSerializer, PrescriptionDocumentSerializer, PrescriptionReviewSerializer, PrescriptionReviewUpdateSerializer
+from .services.batch import create_batch_job, sync_batch_job
+from .services.intake_draft import build_intake_draft
 from .services.processing import process_document
 from .services.publish import publish_review
 
@@ -113,6 +115,32 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
             ])
         return Response(PrescriptionReviewSerializer(review).data)
 
+
+class PrescriptionBatchJobViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """Historical backfill submission endpoint; completion remains review-only."""
+    queryset = PrescriptionBatchJob.objects.prefetch_related("items__document").select_related("submitted_by")
+    serializer_class = PrescriptionBatchJobSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        document_ids = request.data.get("document_ids")
+        display_name = str(request.data.get("display_name") or "Prescription backfill").strip()
+        if not isinstance(document_ids, list) or not document_ids:
+            raise ValidationError({"document_ids": "Provide one or more ready-for-review document IDs."})
+        if len(document_ids) > 100:
+            raise ValidationError({"document_ids": "Submit at most 100 documents per batch."})
+        try:
+            normalized_ids = [int(item) for item in document_ids]
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"document_ids": "Document IDs must be integers."}) from exc
+        job = create_batch_job(document_ids=normalized_ids, user=request.user, display_name=display_name)
+        return Response(self.get_serializer(job).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="sync")
+    def sync(self, request, pk=None):
+        job = sync_batch_job(self.get_object())
+        return Response(self.get_serializer(job).data)
+
     @action(detail=True, methods=["post"], url_path="approve-review")
     def approve_review(self, request, pk=None):
         review = self._existing_review(self.get_object())
@@ -127,6 +155,29 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
         PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="approved")
         return Response(PrescriptionReviewSerializer(review).data)
+
+    @action(detail=True, methods=["get"], url_path="entry-draft")
+    def entry_draft(self, request, pk=None):
+        """Return the reviewed intake contract for the real New Entry screen.
+
+        This deliberately does not publish anything.  The browser uses it only
+        to prefill the existing entry form, where controlled vocabulary choices
+        and all remaining clinical decisions stay with the reviewer.
+        """
+        review = self._existing_review(self.get_object())
+        if not isinstance(review.reviewed_data, dict):
+            raise ValidationError({"detail": "This review has no intake draft. Re-run extraction before opening New Entry."})
+        # Rebuild from the reviewer-owned candidates.  The stored intake_draft
+        # is only an initial snapshot and must never discard later corrections.
+        intake_draft = build_intake_draft(review.reviewed_data)
+        return Response({
+            "document_id": review.document_id,
+            "review_id": review.pk,
+            "selected_patient": review.selected_patient_id,
+            "review_status": review.status,
+            "intake_draft": intake_draft,
+            "reviewed_data": review.reviewed_data,
+        })
 
     @action(detail=True, methods=["post"], url_path="reopen-review")
     def reopen_review(self, request, pk=None):

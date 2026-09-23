@@ -1948,3 +1948,18 @@ export function rejectPrescriptionReview(documentId: number, reason: string) {
     { method: "POST", body: JSON.stringify({ reason }) },
   );
 }
+
+export interface PrescriptionEntryDraft {
+  document_id: number;
+  review_id: number;
+  selected_patient: number | null;
+  review_status: PrescriptionReview["status"];
+  intake_draft: Record<string, unknown>;
+  reviewed_data: Record<string, unknown>;
+}
+
+export function fetchPrescriptionEntryDraft(documentId: number) {
+  return request<PrescriptionEntryDraft>(
+    `/api/prescriptions/documents/${documentId}/entry-draft/`,
+  );
+}

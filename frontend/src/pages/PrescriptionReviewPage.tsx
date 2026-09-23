@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ExternalLink, FileText, Play, Save, ShieldCheck, Upload, XCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import {
   type PrescriptionDocument,
@@ -65,6 +66,7 @@ const entrySectionLabels: Record<string, string> = {
   chronology: "Clinical timeline",
   observations: "Clinical observations",
   field_tracking: "Field coverage",
+  gemini_extraction: "Gemini enrichment cross-check",
   unresolved_items: "Unresolved items",
   form_field_candidates: "New Entry field candidates",
   intake_draft: "New Entry draft",
@@ -93,6 +95,7 @@ function ReviewField({ label, value, path, onChange }: { label: string; value: u
 
 export default function PrescriptionReviewPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [reviewedData, setReviewedData] = useState<ReviewData>({});
@@ -195,7 +198,7 @@ export default function PrescriptionReviewPage() {
     { key: "treatment", step: "Treatment and outcomes", label: "Treatment protocols", fields: ["medications", "treatment_candidates", "administration_candidates"] },
     { key: "procedures", step: "Treatment and outcomes", label: "Surgery and radiotherapy", fields: ["surgery_candidates", "radiotherapy_candidates"] },
     { key: "outcomes", step: "Treatment and outcomes", label: "Response and follow-up", fields: ["response_candidates", "progression_candidates", "survival_candidates", "chronology"] },
-    { key: "coverage", step: "Review safeguards", label: "Coverage and unresolved items", fields: ["field_tracking", "unresolved_items"] },
+    { key: "coverage", step: "Review safeguards", label: "Coverage and unresolved items", fields: ["field_tracking", "unresolved_items", "gemini_extraction"] },
     { key: "intake-draft", step: "New Entry handoff", label: "New Entry form draft", fields: ["form_field_candidates", "intake_draft"] },
   ].filter((section) => section.fields.some((field) => {
     const value = reviewedData[field];
@@ -247,7 +250,7 @@ export default function PrescriptionReviewPage() {
         <section className="panel prescription-review">
           {!selected ? <div className="prescription-empty"><FileText size={34} /><h3>Select or upload a prescription</h3><p>Its OCR text, extraction result, and validation warnings will appear here.</p></div> : <>
             <div className="panel-heading">
-              <div><p className="eyebrow">Prescription review workbench</p><h3>{selected.original_filename}</h3><p className="hero-text">{selected.page_count || selected.pages.length || "No"} page{(selected.page_count || selected.pages.length) === 1 ? "" : "s"} · {statusLabel[selected.status]}</p></div>
+              <div><p className="eyebrow">Prescription review workbench</p><h3>{selected.original_filename}</h3><p className="hero-text">{selected.page_count || selected.pages.length || "No"} page{(selected.page_count || selected.pages.length) === 1 ? "" : "s"} · {statusLabel[selected.status]}{latestRun?.ai_model ? ` · Gemini enrichment: ${latestRun.ai_model}` : " · Deterministic extraction"}</p></div>
               {documents.length > 1 ? <select className="filter-select prescription-document-switcher" value={selected.id} onChange={(event) => setSelectedId(Number(event.target.value))} aria-label="Switch prescription document">{documents.map((document) => <option key={document.id} value={document.id}>{document.original_filename}</option>)}</select> : null}
               {selected.status === "uploaded" ? <button type="button" className="primary-button" disabled={processMutation.isPending} onClick={() => processMutation.mutate(selected.id)}><Play size={16} /> {processMutation.isPending ? "Extracting…" : "Run extraction"}</button> : null}
             </div>
@@ -273,7 +276,13 @@ export default function PrescriptionReviewPage() {
                   </section>
                   {reviewError ? <p className="prescription-error">{reviewError}</p> : null}
                   {(saveReviewMutation.error || approveReviewMutation.error || reopenReviewMutation.error || rejectReviewMutation.error) ? <p className="prescription-error">{(saveReviewMutation.error || approveReviewMutation.error || reopenReviewMutation.error || rejectReviewMutation.error)?.message}</p> : null}
-                  {selected.review.status !== "approved" && selected.review.status !== "rejected" ? <div className="prescription-review-actions"><button type="button" className="secondary-button" disabled={saveReviewMutation.isPending} onClick={saveReview}><Save size={16} />{saveReviewMutation.isPending ? "Saving…" : "Save review"}</button><button type="button" className="secondary-button" onClick={() => setReadyToApprove(true)}>Finish corrections</button><button type="button" className="secondary-button prescription-reject-button" disabled={rejectReviewMutation.isPending} onClick={() => { if (!reviewNotes.trim()) { setReviewError("Enter a rejection reason in reviewer notes before rejecting."); return; } rejectReviewMutation.mutate({ documentId: selected.id, reason: reviewNotes.trim() }); }}><XCircle size={16} />Reject review</button></div> : null}
+                  {selected.review.status !== "rejected" ? <div className="prescription-review-actions"><button type="button" className="primary-button" disabled={saveReviewMutation.isPending} onClick={() => {
+                    if (JSON.stringify(reviewedData) !== JSON.stringify(selected.review?.reviewed_data)) {
+                      setReviewError("Save the review before opening New Entry so the handoff is auditable.");
+                      return;
+                    }
+                    navigate(`/entries/new?prescription_document=${selected.id}`);
+                  }}><FileText size={16} />Open in New Entry</button>{selected.review.status !== "approved" ? <><button type="button" className="secondary-button" disabled={saveReviewMutation.isPending} onClick={saveReview}><Save size={16} />{saveReviewMutation.isPending ? "Saving…" : "Save review"}</button><button type="button" className="secondary-button" onClick={() => setReadyToApprove(true)}>Finish corrections</button><button type="button" className="secondary-button prescription-reject-button" disabled={rejectReviewMutation.isPending} onClick={() => { if (!reviewNotes.trim()) { setReviewError("Enter a rejection reason in reviewer notes before rejecting."); return; } rejectReviewMutation.mutate({ documentId: selected.id, reason: reviewNotes.trim() }); }}><XCircle size={16} />Reject review</button></> : null}</div> : null}
                   {readyToApprove && selected.review.status !== "approved" && selected.review.status !== "rejected" ? <section className="prescription-approval-step"><strong>Final check</strong><p>Save corrections before approval. Approval locks this review but does not publish clinical records.</p><button type="button" className="primary-button" disabled={approveReviewMutation.isPending || saveReviewMutation.isPending} onClick={() => approveReviewMutation.mutate(selected.id)}><Check size={16} />{approveReviewMutation.isPending ? "Approving…" : "Approve completed review"}</button></section> : null}
                   {selected.review.status === "approved" ? <section className="prescription-approval-step"><strong>Approved review</strong><p>If a correction is needed, reopen this review with an auditable reason. It will return to in-review status.</p><label className="filter-field"><span>Reason for reopening</span><textarea className="auth-input entry-textarea" value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Explain what must be corrected." /></label><button type="button" className="secondary-button" disabled={reopenReviewMutation.isPending} onClick={() => { if (!reopenReason.trim()) { setReviewError("Enter a reason before reopening this review."); return; } reopenReviewMutation.mutate({ documentId: selected.id, reason: reopenReason.trim() }); }}><Save size={16} />{reopenReviewMutation.isPending ? "Reopening…" : "Reopen for correction"}</button></section> : null}
                   {selected.review.changes.length ? <details className="prescription-audit"><summary>{selected.review.changes.length} audited change{selected.review.changes.length === 1 ? "" : "s"}</summary>{selected.review.changes.map((change) => <p key={change.id}>{change.field_path} · {formatDate(change.changed_at)}</p>)}</details> : null}

@@ -7,6 +7,7 @@ from django.core.files.base import ContentFile
 from django.utils import timezone
 
 from prescriptions.models import ExtractionIssue, ExtractionRun, PrescriptionDocument, PrescriptionPage
+from prescriptions.services.extraction import extract_structured_data
 from prescriptions.services.text_analysis import analyze_text
 
 
@@ -85,12 +86,26 @@ def process_document(document):
             if image_bytes:
                 page.image.save(f"{document.pk}-page-{number}.png", ContentFile(image_bytes), save=False)
             page.save()
-        result = analyze_text(PrescriptionPage.objects.filter(document=document).order_by("page_number"))
-        run.prompt_version = "deterministic-text-v1"
+        stored_pages = PrescriptionPage.objects.filter(document=document).order_by("page_number")
+        result = analyze_text(stored_pages)
+        # Deterministic evidence remains the baseline. Gemini enriches the
+        # review-only payload and can never block OCR or create clinical data.
+        try:
+            gemini_data, raw_response, prompt_version, model_name = extract_structured_data(stored_pages)
+            result["gemini_extraction"] = gemini_data
+            if gemini_data.get("warnings"):
+                result["warnings"].extend(str(warning) for warning in gemini_data["warnings"])
+            run.raw_response = raw_response
+            run.prompt_version = prompt_version
+            run.ai_model = model_name
+        except Exception as exc:
+            result["gemini_extraction"] = {"unresolved_items": [{"type": "structured_extraction", "reason": str(exc)}]}
+            result["warnings"].append("Gemini enrichment failed; deterministic extraction is available for review.")
+            run.prompt_version = "deterministic-text-v1"
         run.structured_data = result
         run.status = ExtractionRun.Status.COMPLETED
         run.completed_at = timezone.now()
-        run.save(update_fields=["prompt_version", "structured_data", "status", "completed_at"])
+        run.save(update_fields=["prompt_version", "ai_model", "raw_response", "structured_data", "status", "completed_at"])
         for warning in result["warnings"]:
             ExtractionIssue.objects.create(document=document, extraction_run=run, code="extraction_warning", severity=ExtractionIssue.Severity.WARNING, message=str(warning))
         for issue in result.get("validation", {}).get("issues", []):

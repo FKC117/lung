@@ -143,8 +143,9 @@ MEDIA_ROOT = BASE_DIR / "media"
 # Optional absolute path for Windows installations where tesseract.exe is not on PATH.
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
 TESSERACT_LANGUAGES = os.getenv("TESSERACT_LANGUAGES", "eng")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip()
 PRESCRIPTION_EXTRACTION_MODEL = os.getenv("PRESCRIPTION_EXTRACTION_MODEL", "").strip()
-PRESCRIPTION_EXTRACTION_PROMPT_VERSION = "1.0"
+PRESCRIPTION_EXTRACTION_PROMPT_VERSION = os.getenv("PRESCRIPTION_EXTRACTION_PROMPT_VERSION", "2.0").strip()
 # Leave blank until the clinic explicitly confirms how ambiguous numeric dates are written.
 PRESCRIPTION_DATE_ORDER = os.getenv("PRESCRIPTION_DATE_ORDER", "").strip().upper()
 

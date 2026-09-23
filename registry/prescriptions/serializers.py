@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from records.models import Patient
-from .models import ExtractionIssue, ExtractionRun, PrescriptionDocument, PrescriptionPage, PrescriptionReview, PrescriptionReviewChange
+from .models import ExtractionIssue, ExtractionRun, PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, PrescriptionReviewChange
 
 
 class PrescriptionPageSerializer(serializers.ModelSerializer):
@@ -57,3 +57,19 @@ class PrescriptionDocumentSerializer(serializers.ModelSerializer):
         model = PrescriptionDocument
         fields = ("id", "file", "original_filename", "sha256", "patient", "page_count", "status", "uploaded_by", "created_at", "processing_started_at", "processed_at", "pages", "extraction_runs", "issues", "review")
         read_only_fields = ("original_filename", "sha256", "page_count", "status", "uploaded_by", "created_at", "processing_started_at", "processed_at", "pages", "extraction_runs", "issues")
+
+
+class PrescriptionBatchItemSerializer(serializers.ModelSerializer):
+    document_name = serializers.CharField(source="document.original_filename", read_only=True)
+    class Meta:
+        model = PrescriptionBatchItem
+        fields = ("id", "document", "document_name", "request_key", "status", "input_sha256", "error", "attempts", "completed_at")
+        read_only_fields = fields
+
+
+class PrescriptionBatchJobSerializer(serializers.ModelSerializer):
+    items = PrescriptionBatchItemSerializer(many=True, read_only=True)
+    class Meta:
+        model = PrescriptionBatchJob
+        fields = ("id", "display_name", "provider", "provider_job_name", "model_name", "schema_version", "prompt_version", "status", "submitted_by", "submitted_at", "completed_at", "error", "created_at", "updated_at", "items")
+        read_only_fields = fields

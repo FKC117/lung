@@ -77,6 +77,58 @@ class ExtractionRun(models.Model):
         ordering = ("-created_at",)
 
 
+class PrescriptionBatchJob(models.Model):
+    """An auditable provider batch; documents are never published by a batch."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SUBMITTED = "submitted", "Submitted"
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    display_name = models.CharField(max_length=160)
+    provider = models.CharField(max_length=32, default="gemini")
+    provider_job_name = models.CharField(max_length=255, blank=True, db_index=True)
+    model_name = models.CharField(max_length=128)
+    schema_version = models.CharField(max_length=32, default="2.0")
+    prompt_version = models.CharField(max_length=64)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT, db_index=True)
+    submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="submitted_prescription_batches")
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+
+class PrescriptionBatchItem(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    batch_job = models.ForeignKey(PrescriptionBatchJob, on_delete=models.CASCADE, related_name="items")
+    document = models.ForeignKey(PrescriptionDocument, on_delete=models.PROTECT, related_name="batch_items")
+    request_key = models.CharField(max_length=128)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    input_sha256 = models.CharField(max_length=64)
+    raw_response = models.TextField(blank=True)
+    error = models.TextField(blank=True)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(fields=["batch_job", "document"], name="unique_prescription_batch_document"),
+            models.UniqueConstraint(fields=["batch_job", "request_key"], name="unique_prescription_batch_request_key"),
+        ]
+
+
 class ExtractionIssue(models.Model):
     class Severity(models.TextChoices):
         INFO = "info", "Info"
