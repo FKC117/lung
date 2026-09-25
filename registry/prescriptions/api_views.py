@@ -8,8 +8,8 @@ from rest_framework.response import Response
 from .models import PrescriptionBatchJob, PrescriptionDocument, PrescriptionReview, PrescriptionReviewChange
 from .serializers import PrescriptionBatchJobSerializer, PrescriptionDocumentSerializer, PrescriptionReviewSerializer, PrescriptionReviewUpdateSerializer
 from .services.batch import create_batch_job, sync_batch_job
+from .services.draft_schema import is_canonical_draft
 from .services.intake_draft import build_intake_draft
-from .services.publish import publish_review
 from .tasks import process_prescription_document, sync_prescription_batch_job
 
 
@@ -74,12 +74,22 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
     def _start_review(self, document, user):
         latest_run = document.extraction_runs.filter(status="completed").first()
         review, _ = PrescriptionReview.objects.get_or_create(document=document)
-        if not review.reviewed_data:
+        if not review.reviewed_data or not is_canonical_draft(review.reviewed_data):
             if not latest_run:
                 raise ValidationError({"detail": "Process the document before starting review."})
-            review.reviewed_data = latest_run.structured_data
+            source = review.reviewed_data or latest_run.structured_data
+            if not review.reviewed_data and isinstance(latest_run.structured_data, dict):
+                source = latest_run.structured_data.get("canonical_draft", latest_run.structured_data)
+            review.reviewed_data = build_intake_draft(
+                source,
+                document_id=document.pk,
+                linked_patient_id=review.selected_patient_id or document.patient_id,
+            )
+            draft_patient_id = review.reviewed_data["patient"]["patient_id"]
+            if draft_patient_id:
+                review.selected_patient_id = draft_patient_id
             review.assigned_to = review.assigned_to or user
-            review.save(update_fields=["reviewed_data", "assigned_to", "updated_at"])
+            review.save(update_fields=["reviewed_data", "selected_patient", "assigned_to", "updated_at"])
         return review
 
     def _existing_review(self, document):
@@ -100,16 +110,24 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
             return Response(PrescriptionReviewSerializer(review).data)
         if review.status in {PrescriptionReview.Status.APPROVED, PrescriptionReview.Status.REJECTED}:
             raise ValidationError({"detail": "A completed review cannot be edited. Start a new review if correction is required."})
-        serializer = PrescriptionReviewUpdateSerializer(data=request.data, partial=True)
+        serializer = PrescriptionReviewUpdateSerializer(
+            data=request.data,
+            partial=True,
+            context={"document_id": review.document_id},
+        )
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             changes = []
             if "reviewed_data" in serializer.validated_data and serializer.validated_data["reviewed_data"] != review.reviewed_data:
                 changes.extend(json_changes(review.reviewed_data, serializer.validated_data["reviewed_data"]))
                 review.reviewed_data = serializer.validated_data["reviewed_data"]
+                draft_patient = review.reviewed_data["patient"]
+                review.selected_patient_id = draft_patient["patient_id"] if draft_patient["match_status"] == "existing" else None
             if "selected_patient" in serializer.validated_data and serializer.validated_data["selected_patient"] != review.selected_patient:
                 old = review.selected_patient_id
                 review.selected_patient = serializer.validated_data["selected_patient"]
+                review.reviewed_data["patient"]["match_status"] = "existing" if review.selected_patient_id else "unresolved"
+                review.reviewed_data["patient"]["patient_id"] = review.selected_patient_id
                 changes.append(("selected_patient", old, review.selected_patient_id))
             if "notes" in serializer.validated_data and serializer.validated_data["notes"] != review.notes:
                 changes.append(("notes", review.notes, serializer.validated_data["notes"]))
@@ -121,6 +139,80 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
                 PrescriptionReviewChange(review=review, changed_by=request.user, field_path=path, previous_value=old, new_value=new)
                 for path, old, new in changes
             ])
+        return Response(PrescriptionReviewSerializer(review).data)
+
+    @action(detail=True, methods=["post"], url_path="approve-review")
+    def approve_review(self, request, pk=None):
+        review = self._existing_review(self.get_object())
+        if review.status == PrescriptionReview.Status.REJECTED:
+            raise ValidationError({"detail": "A rejected review cannot be approved."})
+        validator = PrescriptionReviewUpdateSerializer(
+            data={"reviewed_data": review.reviewed_data},
+            context={"document_id": review.document_id},
+        )
+        validator.is_valid(raise_exception=True)
+        previous_status = review.status
+        review.status = PrescriptionReview.Status.APPROVED
+        review.reviewed_by = request.user
+        review.reviewed_at = timezone.now()
+        review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
+        PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="approved")
+        return Response(PrescriptionReviewSerializer(review).data)
+
+    @action(detail=True, methods=["get"], url_path="entry-draft")
+    def entry_draft(self, request, pk=None):
+        """Return the same canonical draft consumed by future manual intake."""
+        review = self._start_review(self.get_object(), request.user)
+        validator = PrescriptionReviewUpdateSerializer(
+            data={"reviewed_data": review.reviewed_data},
+            context={"document_id": review.document_id},
+        )
+        validator.is_valid(raise_exception=True)
+        return Response({
+            "document_id": review.document_id,
+            "review_id": review.pk,
+            "selected_patient": review.selected_patient_id,
+            "review_status": review.status,
+            "intake_draft": review.reviewed_data,
+            "reviewed_data": review.reviewed_data,
+        })
+
+    @action(detail=True, methods=["post"], url_path="reopen-review")
+    def reopen_review(self, request, pk=None):
+        review = self._existing_review(self.get_object())
+        reason = request.data.get("reason", "").strip()
+        if review.status != PrescriptionReview.Status.APPROVED:
+            raise ValidationError({"detail": "Only an approved review can be reopened."})
+        if not reason:
+            raise ValidationError({"reason": "A reopen reason is required."})
+        previous_reviewer = review.reviewed_by_id
+        previous_reviewed_at = review.reviewed_at.isoformat() if review.reviewed_at else None
+        with transaction.atomic():
+            review.status = PrescriptionReview.Status.IN_REVIEW
+            review.reviewed_by = None
+            review.reviewed_at = None
+            review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
+            PrescriptionReviewChange.objects.bulk_create([
+                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="status", previous_value="approved", new_value="in_review"),
+                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reviewed_by", previous_value=previous_reviewer, new_value=None),
+                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reviewed_at", previous_value=previous_reviewed_at, new_value=None),
+                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reopen_reason", previous_value=None, new_value=reason),
+            ])
+        return Response(PrescriptionReviewSerializer(review).data)
+
+    @action(detail=True, methods=["post"], url_path="reject-review")
+    def reject_review(self, request, pk=None):
+        review = self._existing_review(self.get_object())
+        reason = request.data.get("reason", "").strip()
+        if not reason:
+            raise ValidationError({"reason": "A rejection reason is required."})
+        previous_status = review.status
+        review.status = PrescriptionReview.Status.REJECTED
+        review.notes = reason
+        review.reviewed_by = request.user
+        review.reviewed_at = timezone.now()
+        review.save(update_fields=["status", "notes", "reviewed_by", "reviewed_at", "updated_at"])
+        PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="rejected")
         return Response(PrescriptionReviewSerializer(review).data)
 
 
@@ -152,87 +244,3 @@ class PrescriptionBatchJobViewSet(mixins.CreateModelMixin, mixins.ListModelMixin
         except Exception as exc:
             raise ValidationError({"detail": f"Unable to queue batch synchronization: {exc}"}) from exc
         return Response({**self.get_serializer(job).data, "task_id": task.id}, status=status.HTTP_202_ACCEPTED)
-
-    @action(detail=True, methods=["post"], url_path="approve-review")
-    def approve_review(self, request, pk=None):
-        review = self._existing_review(self.get_object())
-        if review.status == PrescriptionReview.Status.REJECTED:
-            raise ValidationError({"detail": "A rejected review cannot be approved."})
-        if not review.reviewed_data:
-            raise ValidationError({"detail": "Review data is required before approval."})
-        previous_status = review.status
-        review.status = PrescriptionReview.Status.APPROVED
-        review.reviewed_by = request.user
-        review.reviewed_at = timezone.now()
-        review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
-        PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="approved")
-        return Response(PrescriptionReviewSerializer(review).data)
-
-    @action(detail=True, methods=["get"], url_path="entry-draft")
-    def entry_draft(self, request, pk=None):
-        """Return the reviewed intake contract for the real New Entry screen.
-
-        This deliberately does not publish anything.  The browser uses it only
-        to prefill the existing entry form, where controlled vocabulary choices
-        and all remaining clinical decisions stay with the reviewer.
-        """
-        # Opening New Entry is the correction workflow. Create its audited
-        # review snapshot on demand rather than forcing a separate editor.
-        review = self._start_review(self.get_object(), request.user)
-        if not isinstance(review.reviewed_data, dict):
-            raise ValidationError({"detail": "This review has no intake draft. Re-run extraction before opening New Entry."})
-        # Rebuild from the reviewer-owned candidates.  The stored intake_draft
-        # is only an initial snapshot and must never discard later corrections.
-        intake_draft = build_intake_draft(review.reviewed_data)
-        return Response({
-            "document_id": review.document_id,
-            "review_id": review.pk,
-            "selected_patient": review.selected_patient_id,
-            "review_status": review.status,
-            "intake_draft": intake_draft,
-            "reviewed_data": review.reviewed_data,
-        })
-
-    @action(detail=True, methods=["post"], url_path="reopen-review")
-    def reopen_review(self, request, pk=None):
-        review = self._existing_review(self.get_object())
-        reason = request.data.get("reason", "").strip()
-        if review.status != PrescriptionReview.Status.APPROVED:
-            raise ValidationError({"detail": "Only an approved review can be reopened."})
-        if not reason:
-            raise ValidationError({"reason": "A reopen reason is required."})
-        previous_reviewer = review.reviewed_by_id
-        previous_reviewed_at = review.reviewed_at.isoformat() if review.reviewed_at else None
-        with transaction.atomic():
-            review.status = PrescriptionReview.Status.IN_REVIEW
-            review.reviewed_by = None
-            review.reviewed_at = None
-            review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
-            PrescriptionReviewChange.objects.bulk_create([
-                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="status", previous_value="approved", new_value="in_review"),
-                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reviewed_by", previous_value=previous_reviewer, new_value=None),
-                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reviewed_at", previous_value=previous_reviewed_at, new_value=None),
-                PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reopen_reason", previous_value=None, new_value=reason),
-            ])
-        return Response(PrescriptionReviewSerializer(review).data)
-
-    @action(detail=True, methods=["post"], url_path="publish-review")
-    def publish_review(self, request, pk=None):
-        review = self._existing_review(self.get_object())
-        observation, published = publish_review(review, request.user)
-        return Response({"review": PrescriptionReviewSerializer(review).data, "observation_id": observation.pk, "published": published}, status=status.HTTP_201_CREATED)
-
-    @action(detail=True, methods=["post"], url_path="reject-review")
-    def reject_review(self, request, pk=None):
-        review = self._existing_review(self.get_object())
-        reason = request.data.get("reason", "").strip()
-        if not reason:
-            raise ValidationError({"reason": "A rejection reason is required."})
-        previous_status = review.status
-        review.status = PrescriptionReview.Status.REJECTED
-        review.notes = reason
-        review.reviewed_by = request.user
-        review.reviewed_at = timezone.now()
-        review.save(update_fields=["status", "notes", "reviewed_by", "reviewed_at", "updated_at"])
-        PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="rejected")
-        return Response(PrescriptionReviewSerializer(review).data)

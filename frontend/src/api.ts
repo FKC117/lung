@@ -1861,11 +1861,75 @@ export interface PrescriptionReviewChange {
   changed_at: string;
 }
 
+export type PrescriptionDraftState = "extracted" | "edited" | "unresolved" | "validated";
+
+export interface PrescriptionEvidenceRef {
+  evidence_id: string;
+  field_path: string;
+  source_text: string;
+  page: number | null;
+  confidence: number | null;
+}
+
+export interface PrescriptionDraftRecord {
+  temp_id: string;
+  state: PrescriptionDraftState;
+  values: Record<string, unknown>;
+  resolutions: Record<string, {
+    status: "resolved" | "ambiguous" | "unresolved";
+    resource: string;
+    raw_value: unknown;
+    option_id: number | null;
+    match_method: string | null;
+    candidates: Array<{ option_id: number; label: string; match_method: string; score: number }>;
+    reason: string;
+  }>;
+  evidence_refs: string[];
+}
+
+export interface PrescriptionObservationDraft {
+  temp_id: string;
+  observed_at: string | null;
+  prescription_date: string | null;
+  temporal_context: "current" | "historical" | "planned" | "unknown";
+  anthropometry: Record<string, unknown> | null;
+  comorbidities: PrescriptionDraftRecord[];
+  diagnoses: PrescriptionDraftRecord[];
+  histopathologies: PrescriptionDraftRecord[];
+  ihc_results: PrescriptionDraftRecord[];
+  pathological_staging_results: PrescriptionDraftRecord[];
+  clinical_tnm_stagings: PrescriptionDraftRecord[];
+  pathological_tnm_stagings: PrescriptionDraftRecord[];
+  molecular_tests: PrescriptionDraftRecord[];
+  cancer_markers: PrescriptionDraftRecord[];
+  treatments: PrescriptionDraftRecord[];
+  surgeries: PrescriptionDraftRecord[];
+  radiotherapies: PrescriptionDraftRecord[];
+  recist_assessments: PrescriptionDraftRecord[];
+  irecist_assessments: PrescriptionDraftRecord[];
+  pathological_responses: PrescriptionDraftRecord[];
+  progression_records: PrescriptionDraftRecord[];
+  survival_records: PrescriptionDraftRecord[];
+  evidence_refs: PrescriptionEvidenceRef[];
+}
+
+export interface LongitudinalIntakeDraft extends Record<string, unknown> {
+  schema_version: 1;
+  document_id: number;
+  patient: {
+    match_status: "existing" | "new" | "unresolved";
+    patient_id: number | null;
+    values: Record<string, unknown>;
+  };
+  observations: PrescriptionObservationDraft[];
+  unresolved_items: Array<Record<string, unknown>>;
+}
+
 export interface PrescriptionReview {
   id: number;
   selected_patient: number | null;
   status: "draft" | "in_review" | "approved" | "rejected";
-  reviewed_data: Record<string, unknown>;
+  reviewed_data: LongitudinalIntakeDraft;
   notes: string;
   reviewed_at: string | null;
   created_at: string;
@@ -1954,8 +2018,8 @@ export interface PrescriptionEntryDraft {
   review_id: number;
   selected_patient: number | null;
   review_status: PrescriptionReview["status"];
-  intake_draft: Record<string, unknown>;
-  reviewed_data: Record<string, unknown>;
+  intake_draft: LongitudinalIntakeDraft;
+  reviewed_data: LongitudinalIntakeDraft;
 }
 
 export function fetchPrescriptionEntryDraft(documentId: number) {

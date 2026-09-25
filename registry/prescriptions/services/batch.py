@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from prescriptions.models import PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument
 from prescriptions.services.extraction import SYSTEM_INSTRUCTION, build_contents, validate_extraction
+from prescriptions.services.intake_draft import build_intake_draft
 
 
 def _request_for(document):
@@ -44,6 +45,7 @@ def create_batch_job(*, document_ids, user, display_name):
     job = PrescriptionBatchJob.objects.create(
         display_name=display_name,
         model_name=settings.PRESCRIPTION_EXTRACTION_MODEL,
+        schema_version="1",
         prompt_version=settings.PRESCRIPTION_EXTRACTION_PROMPT_VERSION,
         submitted_by=user,
     )
@@ -141,6 +143,11 @@ def sync_batch_job(job):
                     structured = dict(run.structured_data)
                     structured["gemini_extraction"] = data
                     structured.setdefault("warnings", []).extend(str(value) for value in data.get("warnings", []))
+                    structured["canonical_draft"] = build_intake_draft(
+                        structured,
+                        document_id=item.document_id,
+                        linked_patient_id=item.document.patient_id,
+                    )
                     run.structured_data = structured
                     run.raw_response = raw
                     run.ai_model = job.model_name

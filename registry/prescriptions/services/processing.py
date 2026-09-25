@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from prescriptions.models import ExtractionIssue, ExtractionRun, PrescriptionDocument, PrescriptionPage
 from prescriptions.services.extraction import extract_structured_data
+from prescriptions.services.intake_draft import build_intake_draft
 from prescriptions.services.text_analysis import analyze_text
 
 
@@ -77,7 +78,7 @@ def process_document(document):
     document.status = PrescriptionDocument.Status.PROCESSING
     document.processing_started_at = timezone.now()
     document.save(update_fields=["status", "processing_started_at"])
-    run = ExtractionRun.objects.create(document=document)
+    run = ExtractionRun.objects.create(document=document, schema_version="1")
     try:
         pages = extract_pages(document)
         PrescriptionPage.objects.filter(document=document).delete()
@@ -102,6 +103,11 @@ def process_document(document):
             result["gemini_extraction"] = {"unresolved_items": [{"type": "structured_extraction", "reason": str(exc)}]}
             result["warnings"].append("Gemini enrichment failed; deterministic extraction is available for review.")
             run.prompt_version = "deterministic-text-v1"
+        result["canonical_draft"] = build_intake_draft(
+            result,
+            document_id=document.pk,
+            linked_patient_id=document.patient_id,
+        )
         run.structured_data = result
         run.status = ExtractionRun.Status.COMPLETED
         run.completed_at = timezone.now()

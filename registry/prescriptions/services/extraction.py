@@ -4,7 +4,7 @@ import json
 from django.conf import settings
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1"
 
 SYSTEM_INSTRUCTION = """You extract facts from oncology prescriptions for a human review queue.
 Return JSON only. Never diagnose from medicine names, infer negative results, infer a death,
@@ -14,9 +14,14 @@ an exact date. Unknown or ambiguous facts belong in unresolved_items or warnings
 The JSON object must have exactly these top-level keys: patient, observations,
 unresolved_items, warnings. Every extracted clinical value must be an object with value,
 source_text, page, and confidence (0 to 1). observations is a list because a document may
-describe historical, current, and planned events. Each observation must include event_type,
-temporal_context (historical/current/planned/uncertain), and evidence. Use page numbers supplied
-in the source. Preserve wording faithfully; do not return database IDs or prose outside JSON."""
+describe historical, current, and planned events. Keep distinct events in distinct observation
+objects. Each observation must include temporal_context (historical/current/planned/unknown)
+and may contain these record arrays: comorbidities, diagnoses, histopathologies, ihc_results,
+pathological_staging_results, clinical_tnm_stagings, pathological_tnm_stagings, molecular_tests,
+cancer_markers, treatments, surgeries, radiotherapies, recist_assessments, irecist_assessments,
+pathological_responses, progression_records, and survival_records. Use page numbers supplied in
+the source. Preserve wording faithfully. Never return option_id, database_id, or pk fields, and
+never return prose outside JSON."""
 
 
 def empty_extraction():
@@ -41,6 +46,25 @@ def validate_extraction(data):
         raise ValueError("The extractor response has invalid patient or observations sections.")
     if not isinstance(data["unresolved_items"], list) or not isinstance(data["warnings"], list):
         raise ValueError("The extractor response has invalid warnings sections.")
+    for observation in data["observations"]:
+        if not isinstance(observation, dict):
+            raise ValueError("Every extractor observation must be an object.")
+        temporal_context = observation.get("temporal_context", "unknown")
+        if temporal_context not in {"historical", "current", "planned", "unknown"}:
+            raise ValueError("An extractor observation has an invalid temporal context.")
+
+    def reject_database_ids(value):
+        if isinstance(value, dict):
+            forbidden = {"option_id", "database_id", "pk"} & set(value)
+            if forbidden:
+                raise ValueError("The extractor response attempted to provide database IDs.")
+            for item in value.values():
+                reject_database_ids(item)
+        elif isinstance(value, list):
+            for item in value:
+                reject_database_ids(item)
+
+    reject_database_ids(data)
     return {key: data[key] for key in ("patient", "observations", "unresolved_items", "warnings")}
 
 

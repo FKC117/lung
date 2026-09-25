@@ -4,6 +4,7 @@ import { AlertTriangle, Check, ExternalLink, FileText, Play, Save, ShieldCheck, 
 import { useNavigate } from "react-router-dom";
 
 import {
+  type LongitudinalIntakeDraft,
   type PrescriptionDocument,
   approvePrescriptionReview,
   fetchPrescriptionDocuments,
@@ -180,7 +181,7 @@ export default function PrescriptionReviewPage() {
   });
   const refreshDocuments = async () => queryClient.invalidateQueries({ queryKey: ["prescription-documents"] });
   const startReviewMutation = useMutation({ mutationFn: startPrescriptionReview, onSuccess: refreshDocuments });
-  const saveReviewMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: number; data: Record<string, unknown> }) => updatePrescriptionReview(documentId, { reviewed_data: data, notes: reviewNotes, selected_patient: patientId ? Number(patientId) : null }), onSuccess: refreshDocuments });
+  const saveReviewMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: number; data: Record<string, unknown> }) => updatePrescriptionReview(documentId, { reviewed_data: data as LongitudinalIntakeDraft, notes: reviewNotes, selected_patient: patientId ? Number(patientId) : null }), onSuccess: refreshDocuments });
   const approveReviewMutation = useMutation({ mutationFn: approvePrescriptionReview, onSuccess: refreshDocuments });
   const reopenReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => reopenPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
   const rejectReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => rejectPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
@@ -205,14 +206,9 @@ export default function PrescriptionReviewPage() {
   }
 
   const reviewSections = [
-    { key: "patient", step: "Patient profile and history", label: "Patient profile", fields: ["patient", "prescriber_candidates", "date_candidates"] },
-    { key: "diagnosis", step: "Diagnosis and pathology", label: "Diagnosis and staging", fields: ["diagnosis_candidates", "staging_candidates"] },
-    { key: "pathology", step: "Diagnosis and pathology", label: "Pathology and biomarkers", fields: ["histopathology_candidates", "molecular_candidates", "ihc_candidates", "cancer_marker_candidates"] },
-    { key: "treatment", step: "Treatment and outcomes", label: "Treatment protocols", fields: ["medications", "treatment_candidates", "administration_candidates"] },
-    { key: "procedures", step: "Treatment and outcomes", label: "Surgery and radiotherapy", fields: ["surgery_candidates", "radiotherapy_candidates"] },
-    { key: "outcomes", step: "Treatment and outcomes", label: "Response and follow-up", fields: ["response_candidates", "progression_candidates", "survival_candidates", "chronology"] },
-    { key: "coverage", step: "Review safeguards", label: "Coverage and unresolved items", fields: ["field_tracking", "unresolved_items", "gemini_extraction"] },
-    { key: "intake-draft", step: "New Entry handoff", label: "New Entry form draft", fields: ["form_field_candidates", "intake_draft"] },
+    { key: "patient", step: "Patient profile and matching", label: "Patient", fields: ["patient"] },
+    { key: "observations", step: "Longitudinal clinical draft", label: "Observations", fields: ["observations"] },
+    { key: "unresolved", step: "Review safeguards", label: "Unresolved items", fields: ["unresolved_items"] },
   ].filter((section) => section.fields.some((field) => {
     const value = reviewedData[field];
     return Array.isArray(value) ? value.length > 0 : Boolean(value && typeof value === "object" && Object.keys(value as object).length);

@@ -14,7 +14,6 @@ from prescriptions.services.patient_resolver import find_patient_candidates
 from prescriptions.services.treatment_outcomes import extract_treatment_and_outcomes
 from prescriptions.services.procedures import extract_procedure_evidence
 from prescriptions.services.form_fields import extract_form_fields
-from prescriptions.services.intake_draft import build_intake_draft
 
 
 MONTHS = {
@@ -191,5 +190,4 @@ def analyze_text(pages):
         "warnings": warnings + molecular_warnings + (["Medication lines describe prescriptions only; they do not prove drug administration."] if medications else []) + (["Patient candidates are suggestions only; a reviewer must confirm the patient."] if patient_candidates else []),
     }
     result = track_fields(validate_chronology(result))
-    result["intake_draft"] = build_intake_draft(result)
     return result

@@ -1,6 +1,8 @@
 from rest_framework import serializers
 
 from records.models import Patient
+from .services.draft_schema import validate_draft
+from .services.option_resolver import validate_selected_resolutions
 from .models import ExtractionIssue, ExtractionRun, PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, PrescriptionReviewChange
 
 
@@ -22,7 +24,9 @@ class ExtractionRunSerializer(serializers.ModelSerializer):
     issues = ExtractionIssueSerializer(many=True, read_only=True)
     class Meta:
         model = ExtractionRun
-        fields = ("id", "schema_version", "prompt_version", "ai_model", "raw_response", "structured_data", "status", "error", "created_at", "completed_at", "issues")
+        # raw_response is retained server-side for audit, but is not duplicated
+        # into the routine review API because it can contain patient data.
+        fields = ("id", "schema_version", "prompt_version", "ai_model", "structured_data", "status", "error", "created_at", "completed_at", "issues")
         read_only_fields = fields
 
 
@@ -46,6 +50,22 @@ class PrescriptionReviewUpdateSerializer(serializers.Serializer):
     selected_patient = serializers.PrimaryKeyRelatedField(queryset=Patient.objects.all(), required=False, allow_null=True)
     reviewed_data = serializers.JSONField(required=False)
     notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_reviewed_data(self, value):
+        try:
+            validate_draft(
+                value,
+                document_id=self.context.get("document_id"),
+                check_database=True,
+            )
+            validate_selected_resolutions(value)
+        except Exception as exc:
+            if hasattr(exc, "message_dict"):
+                raise serializers.ValidationError(exc.message_dict) from exc
+            if hasattr(exc, "messages"):
+                raise serializers.ValidationError(exc.messages) from exc
+            raise
+        return value
 
 
 class PrescriptionDocumentSerializer(serializers.ModelSerializer):
