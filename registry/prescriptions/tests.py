@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -436,6 +437,28 @@ class DraftApiTests(TestCase):
             assigned_client.get(f"/api/prescriptions/documents/{self.document.pk}/").status_code,
             200,
         )
+
+    def test_authorized_api_endpoints_stream_private_prescription_media(self):
+        storages = {
+            "default": {"BACKEND": "django.core.files.storage.InMemoryStorage"},
+            "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+        }
+        with self.settings(STORAGES=storages):
+            self.document.file.save("authorized.pdf", ContentFile(b"private prescription"))
+            page = PrescriptionPage.objects.create(document=self.document, page_number=1)
+            page.image.save("authorized.png", ContentFile(b"private page"))
+
+            document_response = self.client.get(
+                f"/api/prescriptions/documents/{self.document.pk}/source-file/"
+            )
+            page_response = self.client.get(
+                f"/api/prescriptions/documents/{self.document.pk}/pages/{page.pk}/image/"
+            )
+
+            self.assertEqual(document_response.status_code, 200)
+            self.assertEqual(b"".join(document_response.streaming_content), b"private prescription")
+            self.assertEqual(page_response.status_code, 200)
+            self.assertEqual(b"".join(page_response.streaming_content), b"private page")
 
     def test_batch_jobs_are_visible_only_to_submitter_or_staff(self):
         job = PrescriptionBatchJob.objects.create(

@@ -1,0 +1,36 @@
+# Relevant excerpt for a Lung registry Apache 2.4 virtual host.
+# Replace the filesystem paths and WSGI configuration for the deployment.
+
+<VirtualHost *:80>
+    ServerName registry.example.org
+
+    # Keep the URL-level denial even when a broader Alias exposes MEDIA_ROOT.
+    <LocationMatch "^/media/(prescriptions|prescription_pages)(?:/|$)">
+        Require all denied
+    </LocationMatch>
+
+    Alias /media/ "/srv/lung/registry/media/"
+    <Directory "/srv/lung/registry/media/">
+        Require all granted
+    </Directory>
+
+    # Defense in depth: deny the sensitive directories at the filesystem
+    # mapping too.  Authorized downloads are streamed by Django's API and do
+    # not depend on Apache serving these paths.
+    <Directory "/srv/lung/registry/media/prescriptions/">
+        Require all denied
+    </Directory>
+    <Directory "/srv/lung/registry/media/prescription_pages/">
+        Require all denied
+    </Directory>
+
+    WSGIDaemonProcess lung_registry python-home=/srv/lung/venv python-path=/srv/lung/registry
+    WSGIProcessGroup lung_registry
+    WSGIScriptAlias / /srv/lung/registry/registry/wsgi.py
+
+    <Directory "/srv/lung/registry/registry/">
+        <Files "wsgi.py">
+            Require all granted
+        </Files>
+    </Directory>
+</VirtualHost>

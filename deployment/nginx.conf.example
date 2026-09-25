@@ -1,0 +1,41 @@
+# Relevant excerpt for a Lung registry Nginx server block.
+# Replace the filesystem paths and upstream with deployment-specific values.
+
+upstream lung_registry {
+    server 127.0.0.1:8000;
+}
+
+server {
+    listen 80;
+    server_name registry.example.org;
+
+    # Prescription source documents and rendered pages are private.  Keep
+    # these ^~ rules before the general /media/ location.  Nginx must never
+    # serve these files directly; the authenticated API actions stream them.
+    location ^~ /media/prescriptions/ {
+        return 404;
+    }
+
+    location ^~ /media/prescription_pages/ {
+        return 404;
+    }
+
+    # Other intentionally public media, such as site branding.
+    location /media/ {
+        alias /srv/lung/registry/media/;
+    }
+
+    location /api/ {
+        proxy_pass http://lung_registry;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /admin/ {
+        proxy_pass http://lung_registry;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
