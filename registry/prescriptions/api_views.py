@@ -1,3 +1,4 @@
+from django.http import FileResponse
 from rest_framework import mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from django.db import transaction
@@ -8,6 +9,7 @@ from rest_framework.response import Response
 from .models import PrescriptionBatchJob, PrescriptionDocument, PrescriptionReview, PrescriptionReviewChange
 from .serializers import PrescriptionBatchJobSerializer, PrescriptionDocumentSerializer, PrescriptionReviewSerializer, PrescriptionReviewUpdateSerializer
 from .services.batch import create_batch_job, sync_batch_job
+from .services.access import prescription_batch_jobs_for_user, prescription_documents_for_user
 from .services.draft_schema import is_canonical_draft
 from .services.intake_draft import build_intake_draft
 from .tasks import process_prescription_document, sync_prescription_batch_job
@@ -34,6 +36,11 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
+    def get_queryset(self):
+        return prescription_documents_for_user(self.request.user).select_related(
+            "patient", "uploaded_by"
+        ).prefetch_related("pages", "issues", "extraction_runs__issues")
+
     def partial_update(self, request, *args, **kwargs):
         raise MethodNotAllowed("PATCH", detail="Update review data through the review endpoint.")
 
@@ -44,7 +51,10 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         checksum = PrescriptionDocument.checksum(uploaded)
         existing = PrescriptionDocument.objects.filter(sha256=checksum).first()
         if existing:
-            return Response({"detail": "Duplicate prescription upload.", "document_id": existing.pk}, status=status.HTTP_409_CONFLICT)
+            payload = {"detail": "Duplicate prescription upload."}
+            if prescription_documents_for_user(request.user).filter(pk=existing.pk).exists():
+                payload["document_id"] = existing.pk
+            return Response(payload, status=status.HTTP_409_CONFLICT)
         document = PrescriptionDocument.objects.create(
             file=uploaded,
             original_filename=uploaded.name,
@@ -53,6 +63,25 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
             uploaded_by=request.user,
         )
         return Response(self.get_serializer(document).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], url_path="source-file")
+    def source_file(self, request, pk=None):
+        document = self.get_object()
+        if not document.file:
+            raise NotFound("This prescription has no source file.")
+        return FileResponse(
+            document.file.open("rb"),
+            as_attachment=False,
+            filename=document.original_filename,
+        )
+
+    @action(detail=True, methods=["get"], url_path=r"pages/(?P<page_id>[^/.]+)/image")
+    def page_image(self, request, pk=None, page_id=None):
+        document = self.get_object()
+        page = document.pages.filter(pk=page_id).first()
+        if not page or not page.image:
+            raise NotFound("This prescription page has no image.")
+        return FileResponse(page.image.open("rb"), as_attachment=False)
 
     @action(detail=True, methods=["post"])
     def process(self, request, pk=None):
@@ -148,7 +177,7 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
             raise ValidationError({"detail": "A rejected review cannot be approved."})
         validator = PrescriptionReviewUpdateSerializer(
             data={"reviewed_data": review.reviewed_data},
-            context={"document_id": review.document_id},
+            context={"document_id": review.document_id, "approval": True},
         )
         validator.is_valid(raise_exception=True)
         previous_status = review.status
@@ -222,6 +251,11 @@ class PrescriptionBatchJobViewSet(mixins.CreateModelMixin, mixins.ListModelMixin
     serializer_class = PrescriptionBatchJobSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_queryset(self):
+        return prescription_batch_jobs_for_user(self.request.user).prefetch_related(
+            "items__document"
+        ).select_related("submitted_by")
+
     def create(self, request, *args, **kwargs):
         document_ids = request.data.get("document_ids")
         display_name = str(request.data.get("display_name") or "Prescription backfill").strip()
@@ -233,6 +267,13 @@ class PrescriptionBatchJobViewSet(mixins.CreateModelMixin, mixins.ListModelMixin
             normalized_ids = [int(item) for item in document_ids]
         except (TypeError, ValueError) as exc:
             raise ValidationError({"document_ids": "Document IDs must be integers."}) from exc
+        authorized_ids = set(
+            prescription_documents_for_user(request.user)
+            .filter(pk__in=normalized_ids)
+            .values_list("pk", flat=True)
+        )
+        if authorized_ids != set(normalized_ids):
+            raise ValidationError({"document_ids": "One or more documents are unavailable."})
         job = create_batch_job(document_ids=normalized_ids, user=request.user, display_name=display_name)
         return Response(self.get_serializer(job).data, status=status.HTTP_201_CREATED)
 

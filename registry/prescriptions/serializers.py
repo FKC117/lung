@@ -1,12 +1,24 @@
 from rest_framework import serializers
+from rest_framework.reverse import reverse
 
 from records.models import Patient
 from .services.draft_schema import validate_draft
-from .services.option_resolver import validate_selected_resolutions
+from .services.option_resolver import validate_approval_readiness, validate_selected_resolutions
 from .models import ExtractionIssue, ExtractionRun, PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, PrescriptionReviewChange
 
 
 class PrescriptionPageSerializer(serializers.ModelSerializer):
+    image = serializers.SerializerMethodField()
+
+    def get_image(self, obj):
+        if not obj.image:
+            return None
+        return reverse(
+            "prescription-document-page-image",
+            kwargs={"pk": obj.document_id, "page_id": obj.pk},
+            request=self.context.get("request"),
+        )
+
     class Meta:
         model = PrescriptionPage
         fields = ("id", "page_number", "raw_text", "cleaned_text", "ocr_confidence", "image", "ocr_metadata")
@@ -59,6 +71,8 @@ class PrescriptionReviewUpdateSerializer(serializers.Serializer):
                 check_database=True,
             )
             validate_selected_resolutions(value)
+            if self.context.get("approval"):
+                validate_approval_readiness(value)
         except Exception as exc:
             if hasattr(exc, "message_dict"):
                 raise serializers.ValidationError(exc.message_dict) from exc
@@ -69,10 +83,21 @@ class PrescriptionReviewUpdateSerializer(serializers.Serializer):
 
 
 class PrescriptionDocumentSerializer(serializers.ModelSerializer):
+    file = serializers.SerializerMethodField()
     pages = PrescriptionPageSerializer(many=True, read_only=True)
     extraction_runs = ExtractionRunSerializer(many=True, read_only=True)
     issues = ExtractionIssueSerializer(many=True, read_only=True)
     review = PrescriptionReviewSerializer(read_only=True)
+
+    def get_file(self, obj):
+        if not obj.file:
+            return None
+        return reverse(
+            "prescription-document-source-file",
+            kwargs={"pk": obj.pk},
+            request=self.context.get("request"),
+        )
+
     class Meta:
         model = PrescriptionDocument
         fields = ("id", "file", "original_filename", "sha256", "patient", "page_count", "status", "uploaded_by", "created_at", "processing_started_at", "processed_at", "pages", "extraction_runs", "issues", "review")

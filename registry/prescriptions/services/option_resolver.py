@@ -37,6 +37,10 @@ OPTION_FIELDS = {
         "alteration_type": "molecular-alteration-types",
         "reported_result": "molecular-results",
         "result": "molecular-results",
+        "clinical_significance": "molecular-clinical-significances",
+        "panel": "molecular-panels",
+        "panel_version": "molecular-panel-versions",
+        "panel_target": "molecular-panel-targets",
     },
     "cancer_markers": {"marker": "cancer-marker-names", "marker_name": "cancer-marker-names"},
     "treatments": {
@@ -44,6 +48,7 @@ OPTION_FIELDS = {
         "line_of_treatment": "lines-of-treatment",
         "protocol": "treatment-protocols",
         "drug": "treatment-drugs",
+        "protocol_drug": "treatment-protocol-drugs",
     },
     "surgeries": {"modality": "surgery-modalities", "laterality": "surgery-lateralities"},
     "radiotherapies": {"site": "radiotherapy-sites", "intent": "radiotherapy-intents", "modality": "radiotherapy-modalities"},
@@ -68,6 +73,29 @@ OPTION_FIELDS = {
     },
     "progression_records": {"status": "disease-progression-statuses", "estimation_method": "response-estimation-methods"},
     "survival_records": {"status": "survival-statuses"},
+}
+
+# These historical lookup models were deleted by existing options migrations.
+# A draft may retain their extracted text for review, but it cannot claim a
+# controlled resolution until the registry has an active canonical option.
+RETIRED_PARENT_SCOPED_FIELDS = {
+    "molecular_tests": {"mutation"},
+    "treatments": {"protocol_cycle", "treatment_protocol_cycle"},
+}
+
+RESOLUTION_SCOPES = {
+    ("diagnoses", "disease_subgroup"): {"disease_group_id": "disease_group"},
+    ("molecular_tests", "exon"): {"gene_id": "gene"},
+    ("molecular_tests", "panel_version"): {"panel_id": "panel"},
+    ("molecular_tests", "panel_target"): {
+        "panel_version_id": "panel_version",
+        "gene_id": "gene",
+        "alteration_type_id": "alteration_type",
+    },
+    ("treatments", "protocol_drug"): {
+        "protocol_id": "protocol",
+        "drug_id": "drug",
+    },
 }
 
 
@@ -165,7 +193,12 @@ def resolve_draft_options(draft):
                     raw_value = values.get(field)
                     if raw_value in (None, "") or isinstance(raw_value, (dict, list)):
                         continue
-                    resolutions[field] = resolve_option(resource, str(raw_value))
+                    filters = {}
+                    for filter_name, parent_field in RESOLUTION_SCOPES.get((collection, field), {}).items():
+                        parent = resolutions.get(parent_field, {})
+                        if parent.get("status") == "resolved" and parent.get("option_id") is not None:
+                            filters[filter_name] = parent["option_id"]
+                    resolutions[field] = resolve_option(resource, str(raw_value), filters=filters)
                     if resolutions[field]["status"] in {"ambiguous", "unresolved"}:
                         record["state"] = "unresolved"
     return resolved
@@ -173,6 +206,14 @@ def resolve_draft_options(draft):
 
 def validate_selected_resolutions(draft):
     """Verify that reviewer-selected option IDs belong to their declared resource."""
+    patient_values = draft.get("patient", {}).get("values", {})
+    district_id = patient_values.get("district")
+    thana_id = patient_values.get("thana")
+    if isinstance(thana_id, int) and not isinstance(thana_id, bool):
+        if not isinstance(district_id, int) or isinstance(district_id, bool):
+            raise ValidationError({"patient.thana": "A selected thana requires a selected district."})
+        if not OPTION_RESOURCES["thanas"].objects.filter(pk=thana_id, district_id=district_id).exists():
+            raise ValidationError({"patient.thana": "The selected thana does not belong to the selected district."})
     for observation in draft.get("observations", []):
         for collection, expected_fields in OPTION_FIELDS.items():
             for record in observation.get(collection, []):
@@ -196,6 +237,122 @@ def validate_selected_resolutions(draft):
                         continue
                     if not isinstance(option_id, int) or isinstance(option_id, bool) or not OPTION_RESOURCES[resource].objects.filter(pk=option_id).exists():
                         raise ValidationError({field: "The selected option does not exist in that resource."})
+                _validate_record_hierarchies(collection, record)
+    return draft
+
+
+def _resolved_id(record, field):
+    resolution = record.get("resolutions", {}).get(field, {})
+    if resolution.get("status") == "resolved":
+        return resolution.get("option_id")
+    return None
+
+
+def _require_parent(record, *, child_field, parent_field, relation_field, collection):
+    child_id = _resolved_id(record, child_field)
+    if child_id is None:
+        return
+    parent_id = _resolved_id(record, parent_field)
+    if parent_id is None:
+        raise ValidationError({child_field: f"A resolved {child_field} requires a resolved {parent_field}."})
+    resource = OPTION_FIELDS[collection][child_field]
+    if not OPTION_RESOURCES[resource].objects.filter(pk=child_id, **{relation_field: parent_id}).exists():
+        raise ValidationError({child_field: f"The selected {child_field} does not belong to the selected {parent_field}."})
+
+
+def _validate_record_hierarchies(collection, record):
+    if collection == "diagnoses":
+        _require_parent(
+            record,
+            child_field="disease_subgroup",
+            parent_field="disease_group",
+            relation_field="disease_group_id",
+            collection=collection,
+        )
+    elif collection == "molecular_tests":
+        _require_parent(
+            record,
+            child_field="exon",
+            parent_field="gene",
+            relation_field="gene_id",
+            collection=collection,
+        )
+        _require_parent(
+            record,
+            child_field="panel_version",
+            parent_field="panel",
+            relation_field="panel_id",
+            collection=collection,
+        )
+        for parent_field, relation_field in (
+            ("panel_version", "panel_version_id"),
+            ("gene", "gene_id"),
+            ("alteration_type", "alteration_type_id"),
+        ):
+            _require_parent(
+                record,
+                child_field="panel_target",
+                parent_field=parent_field,
+                relation_field=relation_field,
+                collection=collection,
+            )
+        target_id = _resolved_id(record, "panel_target")
+        exon_id = _resolved_id(record, "exon")
+        if target_id is not None and exon_id is not None:
+            target_model = OPTION_RESOURCES["molecular-panel-targets"]
+            target = target_model.objects.get(pk=target_id)
+            if target.covered_exons.exists() and not target.covered_exons.filter(pk=exon_id).exists():
+                raise ValidationError({"exon": "The selected exon is not covered by the selected panel target."})
+    elif collection == "treatments":
+        protocol_id = _resolved_id(record, "protocol")
+        drug_id = _resolved_id(record, "drug")
+        membership = OPTION_RESOURCES["treatment-protocol-drugs"]
+        if protocol_id is not None and drug_id is not None and not membership.objects.filter(
+            protocol_id=protocol_id, drug_id=drug_id
+        ).exists():
+            raise ValidationError({"drug": "The selected drug does not belong to the selected protocol."})
+        for parent_field, relation_field in (("protocol", "protocol_id"), ("drug", "drug_id")):
+            _require_parent(
+                record,
+                child_field="protocol_drug",
+                parent_field=parent_field,
+                relation_field=relation_field,
+                collection=collection,
+            )
+
+
+def validate_approval_readiness(draft):
+    """Reject approval while any review decision remains unresolved."""
+    errors = []
+    if draft.get("patient", {}).get("match_status") == "unresolved":
+        errors.append("Patient matching is unresolved.")
+    if draft.get("unresolved_items"):
+        errors.append("The draft still contains unresolved items.")
+
+    for observation_index, observation in enumerate(draft.get("observations", [])):
+        for collection, fields in OPTION_FIELDS.items():
+            retired_fields = RETIRED_PARENT_SCOPED_FIELDS.get(collection, set())
+            for record_index, record in enumerate(observation.get(collection, [])):
+                path = f"observations.{observation_index}.{collection}.{record_index}"
+                if record.get("state") == "unresolved":
+                    errors.append(f"{path} is unresolved.")
+                values = record.get("values", {})
+                resolutions = record.get("resolutions", {})
+                for field in retired_fields:
+                    if values.get(field) not in (None, ""):
+                        errors.append(f"{path}.{field} has no active controlled option and remains unresolved.")
+                for field in fields:
+                    raw_value = values.get(field)
+                    if raw_value in (None, "") or isinstance(raw_value, (dict, list)):
+                        continue
+                    resolution = resolutions.get(field)
+                    if not resolution or resolution.get("status") != "resolved":
+                        errors.append(f"{path}.{field} is not resolved.")
+                for field, resolution in resolutions.items():
+                    if resolution.get("status") in {"ambiguous", "unresolved"}:
+                        errors.append(f"{path}.{field} is {resolution.get('status')}.")
+    if errors:
+        raise ValidationError({"approval": errors})
     return draft
 
 

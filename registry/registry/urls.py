@@ -17,13 +17,24 @@ Including another URLconf
 from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import HttpResponseNotFound
 from django.urls import path, include
+
+
+def private_prescription_media(request, path):
+    """Prevent direct media serving; authorized access uses API file actions."""
+    return HttpResponseNotFound()
+
+
+media_prefix = settings.MEDIA_URL.lstrip("/")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include("options.urls")),
     path("api/", include("records.urls")),
     path("api/", include("prescriptions.urls")),
+    path(f"{media_prefix}prescriptions/<path:path>", private_prescription_media),
+    path(f"{media_prefix}prescription_pages/<path:path>", private_prescription_media),
 ]
 
 if settings.DEBUG:

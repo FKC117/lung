@@ -8,18 +8,28 @@ from rest_framework.test import APIClient
 from options.models import (
     DiagnosisDiseaseGroup,
     DiagnosisDiseaseSubgroup,
+    District,
     Doctor,
+    MolecularAlterationType,
+    MolecularPanel,
+    MolecularPanelTarget,
+    MolecularPanelVersion,
+    MolecularPathologyExon,
     MolecularPathologyGene,
+    MolecularPathologyMethod,
     MolecularPathologyResult,
+    Thana,
     TreatmentDrug,
+    TreatmentProtocol,
+    TreatmentProtocolDrug,
 )
 from records.models import ClinicalObservation, Diagnosis, MolecularTest, MolecularTestResult, Patient
 
-from .models import ExtractionRun, PrescriptionDocument, PrescriptionReview
+from .models import ExtractionRun, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview
 from .services.draft_schema import COLLECTIONS, empty_draft, empty_observation, normalize_extraction, validate_draft
 from .services.extraction import validate_extraction
 from .services.intake_draft import build_intake_draft
-from .services.option_resolver import resolve_option
+from .services.option_resolver import resolve_option, validate_approval_readiness, validate_selected_resolutions
 
 
 def record(temp_id="record-1", *, state="edited", values=None, evidence_refs=None):
@@ -29,6 +39,18 @@ def record(temp_id="record-1", *, state="edited", values=None, evidence_refs=Non
         "values": values or {},
         "resolutions": {},
         "evidence_refs": evidence_refs or [],
+    }
+
+
+def resolution(resource, option, *, raw_value="selected", status="resolved"):
+    return {
+        "status": status,
+        "resource": resource,
+        "raw_value": raw_value,
+        "option_id": option.pk if option is not None and status == "resolved" else None,
+        "match_method": "reviewer_selected" if status == "resolved" else None,
+        "candidates": [],
+        "reason": "",
     }
 
 
@@ -152,6 +174,98 @@ class OptionResolutionTests(TestCase):
         self.assertEqual(MolecularTest.objects.count(), 0)
         self.assertEqual(MolecularTestResult.objects.count(), 0)
 
+    def test_disease_subgroup_must_belong_to_selected_group(self):
+        selected_group = DiagnosisDiseaseGroup.objects.create(name="Selected group")
+        other_group = DiagnosisDiseaseGroup.objects.create(name="Other group")
+        subgroup = DiagnosisDiseaseSubgroup.objects.create(disease_group=other_group, name="Subgroup")
+        draft = empty_draft(20)
+        observation = empty_observation()
+        item = record(values={"disease_group": selected_group.name, "disease_subgroup": subgroup.name})
+        item["resolutions"] = {
+            "disease_group": resolution("diagnosis-disease-groups", selected_group),
+            "disease_subgroup": resolution("diagnosis-disease-subgroups", subgroup),
+        }
+        observation["diagnoses"].append(item)
+        draft["observations"].append(observation)
+        with self.assertRaisesMessage(ValidationError, "does not belong"):
+            validate_selected_resolutions(draft)
+
+    def test_exon_must_belong_to_selected_gene(self):
+        selected_gene = MolecularPathologyGene.objects.create(name="EGFR")
+        other_gene = MolecularPathologyGene.objects.create(name="ALK")
+        exon = MolecularPathologyExon.objects.create(gene=other_gene, name="Exon 20")
+        draft = empty_draft(21)
+        observation = empty_observation()
+        item = record(values={"gene": selected_gene.name, "exon": exon.name})
+        item["resolutions"] = {
+            "gene": resolution("molecular-genes", selected_gene),
+            "exon": resolution("molecular-exons", exon),
+        }
+        observation["molecular_tests"].append(item)
+        draft["observations"].append(observation)
+        with self.assertRaisesMessage(ValidationError, "does not belong"):
+            validate_selected_resolutions(draft)
+
+    def test_drug_must_belong_to_selected_protocol(self):
+        protocol = TreatmentProtocol.objects.create(name="Protocol A")
+        other_protocol = TreatmentProtocol.objects.create(name="Protocol B")
+        drug = TreatmentDrug.objects.create(name="Drug A")
+        TreatmentProtocolDrug.objects.create(protocol=other_protocol, drug=drug)
+        draft = empty_draft(22)
+        observation = empty_observation()
+        item = record(values={"protocol": protocol.name, "drug": drug.name})
+        item["resolutions"] = {
+            "protocol": resolution("treatment-protocols", protocol),
+            "drug": resolution("treatment-drugs", drug),
+        }
+        observation["treatments"].append(item)
+        draft["observations"].append(observation)
+        with self.assertRaisesMessage(ValidationError, "does not belong"):
+            validate_selected_resolutions(draft)
+
+    def test_panel_version_and_target_parent_scopes_are_validated(self):
+        method = MolecularPathologyMethod.objects.create(name="NGS")
+        selected_panel = MolecularPanel.objects.create(name="Panel A")
+        other_panel = MolecularPanel.objects.create(name="Panel B")
+        version = MolecularPanelVersion.objects.create(panel=other_panel, version="1", method=method)
+        gene = MolecularPathologyGene.objects.create(name="KRAS")
+        alteration = MolecularAlterationType.objects.create(name="SNV")
+        target = MolecularPanelTarget.objects.create(panel_version=version, gene=gene, alteration_type=alteration)
+        draft = empty_draft(23)
+        observation = empty_observation()
+        item = record(values={"panel": selected_panel.name, "panel_version": "1", "panel_target": str(target), "gene": gene.name, "alteration_type": alteration.name})
+        item["resolutions"] = {
+            "panel": resolution("molecular-panels", selected_panel),
+            "panel_version": resolution("molecular-panel-versions", version),
+            "panel_target": resolution("molecular-panel-targets", target),
+            "gene": resolution("molecular-genes", gene),
+            "alteration_type": resolution("molecular-alteration-types", alteration),
+        }
+        observation["molecular_tests"].append(item)
+        draft["observations"].append(observation)
+        with self.assertRaisesMessage(ValidationError, "does not belong"):
+            validate_selected_resolutions(draft)
+
+    def test_thana_must_belong_to_selected_district(self):
+        selected = District.objects.create(name="Selected district")
+        other = District.objects.create(name="Other district")
+        thana = Thana.objects.create(district=other, name="Thana")
+        draft = empty_draft(24)
+        draft["patient"]["values"] = {"district": selected.pk, "thana": thana.pk}
+        draft["observations"].append(empty_observation())
+        with self.assertRaisesMessage(ValidationError, "does not belong"):
+            validate_selected_resolutions(draft)
+
+    def test_retired_mutation_and_protocol_cycle_options_block_approval(self):
+        draft = empty_draft(25)
+        draft["patient"]["match_status"] = "new"
+        observation = empty_observation()
+        observation["molecular_tests"].append(record("mutation", values={"mutation": "L858R"}))
+        observation["treatments"].append(record("cycle", values={"protocol_cycle": "Cycle 2"}))
+        draft["observations"].append(observation)
+        with self.assertRaisesMessage(ValidationError, "no active controlled option"):
+            validate_approval_readiness(draft)
+
 
 class DraftApiTests(TestCase):
     def setUp(self):
@@ -237,3 +351,107 @@ class DraftApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["reviewed_data"]["patient"]["match_status"], "existing")
         self.assertEqual(response.data["reviewed_data"]["patient"]["patient_id"], patient.pk)
+
+    def _save_review_draft(self, draft):
+        review = PrescriptionReview.objects.get(document=self.document)
+        review.reviewed_data = draft
+        review.save(update_fields=["reviewed_data", "updated_at"])
+        return review
+
+    def test_approval_rejects_unresolved_items_records_and_resolutions(self):
+        self.client.post(f"/api/prescriptions/documents/{self.document.pk}/start-review/")
+        review = PrescriptionReview.objects.get(document=self.document)
+        baseline = deepcopy(review.reviewed_data)
+        baseline["patient"] = {"match_status": "new", "patient_id": None, "values": {}}
+
+        unresolved_items = deepcopy(baseline)
+        unresolved_items["unresolved_items"] = [{"type": "test", "reason": "Needs review"}]
+        self._save_review_draft(unresolved_items)
+        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/")
+        self.assertEqual(response.status_code, 400)
+
+        unresolved_record = deepcopy(baseline)
+        unresolved_record["observations"][0]["diagnoses"].append(record("unresolved-record", state="unresolved"))
+        self._save_review_draft(unresolved_record)
+        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/")
+        self.assertEqual(response.status_code, 400)
+
+        ambiguous_resolution = deepcopy(baseline)
+        item = record("ambiguous-record", values={"drug": "Unknown brand"})
+        item["resolutions"]["drug"] = resolution(
+            "treatment-drugs", None, raw_value="Unknown brand", status="ambiguous"
+        )
+        ambiguous_resolution["observations"][0]["treatments"].append(item)
+        self._save_review_draft(ambiguous_resolution)
+        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/")
+        self.assertEqual(response.status_code, 400)
+
+        review.refresh_from_db()
+        self.assertNotEqual(review.status, PrescriptionReview.Status.APPROVED)
+
+    def test_authorization_scopes_documents_nested_data_reviews_and_files(self):
+        self.client.post(f"/api/prescriptions/documents/{self.document.pk}/start-review/")
+        page = PrescriptionPage.objects.create(
+            document=self.document,
+            page_number=1,
+            raw_text="sensitive page text",
+            image="prescription_pages/test.png",
+        )
+        outsider = get_user_model().objects.create_user(username="outsider", password="password")
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(outsider)
+
+        detail_url = f"/api/prescriptions/documents/{self.document.pk}/"
+        self.assertEqual(outsider_client.get(detail_url).status_code, 404)
+        self.assertEqual(outsider_client.get(f"{detail_url}review/").status_code, 404)
+        self.assertEqual(outsider_client.get(f"{detail_url}entry-draft/").status_code, 404)
+        self.assertEqual(outsider_client.get(f"{detail_url}source-file/").status_code, 404)
+        self.assertEqual(outsider_client.get(f"{detail_url}pages/{page.pk}/image/").status_code, 404)
+        self.assertEqual(outsider_client.get("/media/prescriptions/test.pdf").status_code, 404)
+        self.assertEqual(self.client.get("/media/prescriptions/test.pdf").status_code, 404)
+        list_response = outsider_client.get("/api/prescriptions/documents/")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertNotContains(list_response, "sensitive duplicate response")
+        self.assertNotContains(list_response, self.document.original_filename)
+
+        staff = get_user_model().objects.create_user(username="staff", password="password", is_staff=True)
+        staff_client = APIClient()
+        staff_client.force_authenticate(staff)
+        staff_response = staff_client.get(detail_url)
+        self.assertEqual(staff_response.status_code, 200)
+        self.assertIn("pages", staff_response.data)
+        self.assertIn("extraction_runs", staff_response.data)
+        self.assertIn("review", staff_response.data)
+        self.assertIn("source-file", staff_response.data["file"])
+
+    def test_assigned_reviewer_can_access_document(self):
+        self.client.post(f"/api/prescriptions/documents/{self.document.pk}/start-review/")
+        assignee = get_user_model().objects.create_user(username="assignee", password="password")
+        review = PrescriptionReview.objects.get(document=self.document)
+        review.assigned_to = assignee
+        review.save(update_fields=["assigned_to", "updated_at"])
+        assigned_client = APIClient()
+        assigned_client.force_authenticate(assignee)
+        self.assertEqual(
+            assigned_client.get(f"/api/prescriptions/documents/{self.document.pk}/").status_code,
+            200,
+        )
+
+    def test_batch_jobs_are_visible_only_to_submitter_or_staff(self):
+        job = PrescriptionBatchJob.objects.create(
+            display_name="Private batch",
+            model_name="test-model",
+            prompt_version="test-prompt",
+            submitted_by=self.user,
+        )
+        outsider = get_user_model().objects.create_user(username="batch-outsider", password="password")
+        outsider_client = APIClient()
+        outsider_client.force_authenticate(outsider)
+        self.assertEqual(
+            outsider_client.get(f"/api/prescriptions/batch-jobs/{job.pk}/").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(f"/api/prescriptions/batch-jobs/{job.pk}/").status_code,
+            200,
+        )
