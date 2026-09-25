@@ -37,6 +37,8 @@ import {
   lookupEntriesPatient,
   saveEntriesDraft,
 } from "../api";
+import { PatientFormSections } from "../components/intake/PatientFormSections";
+import { ObservationFormSections } from "../components/intake/ObservationFormSections";
 
 type MolecularFindingRow = {
   panel_target: string;
@@ -2338,7 +2340,7 @@ export default function EntriesPatientEntryPage() {
           <PublishedObservationHistory source={clinicalDetailQuery.data} />
         ) : null}
         {activeStep === 0 ? (
-          <section className="panel entry-block">
+          <PatientFormSections><ObservationFormSections><section className="panel entry-block">
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Patient identification</p>
@@ -2411,7 +2413,7 @@ export default function EntriesPatientEntryPage() {
                 the registry.
               </p>
             ) : null}
-          </section>
+          </section></ObservationFormSections></PatientFormSections>
         ) : null}
         {activeStep === 0 ? (
           <>

@@ -7,6 +7,7 @@ import {
   type LongitudinalIntakeDraft,
   type PrescriptionDocument,
   approvePrescriptionReview,
+  fetchEntriesOptions,
   fetchPrescriptionDocuments,
   processPrescriptionDocument,
   rejectPrescriptionReview,
@@ -15,6 +16,9 @@ import {
   updatePrescriptionReview,
   uploadPrescriptionDocument,
 } from "../api";
+import { LongitudinalDraftWorkspace } from "../components/intake/LongitudinalDraftWorkspace";
+
+const workspaceOptionResources = ["sexes", "districts", "thanas", "blood-groups", "economic-statuses", "patient-types", "comorbidities", "diagnosis-disease-groups", "diagnosis-disease-subgroups", "diagnosis-primary-sites", "diagnosis-lateralities", "histopathology-details", "histopathology-types", "histopathology-sites", "histopathology-grades", "ihc-cycles", "ihc-cycle-results", "ihc-staging-cycles", "ihc-staging-cycle-results", "tnm-t", "tnm-n", "tnm-m", "tnm-stages", "molecular-methods", "molecular-specimens", "molecular-genes", "molecular-exons", "molecular-alteration-types", "molecular-results", "molecular-clinical-significances", "molecular-panels", "molecular-panel-versions", "molecular-panel-targets", "cancer-marker-names", "treatment-modalities", "lines-of-treatment", "treatment-protocols", "treatment-drugs", "surgery-modalities", "surgery-lateralities", "radiotherapy-sites", "radiotherapy-intents", "radiotherapy-modalities", "response-estimation-methods", "pathological-response-categories", "tumor-regression-grades", "disease-progression-statuses", "survival-statuses"];
 
 const statusLabel: Record<PrescriptionDocument["status"], string> = {
   uploaded: "Ready to extract",
@@ -109,6 +113,7 @@ export default function PrescriptionReviewPage() {
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [pdfLoadError, setPdfLoadError] = useState(false);
   const documentsQuery = useQuery({ queryKey: ["prescription-documents"], queryFn: fetchPrescriptionDocuments });
+  const workspaceOptionsQuery = useQuery({ queryKey: ["prescription-workspace-options"], queryFn: () => fetchEntriesOptions(workspaceOptionResources), staleTime: 60_000 });
   const documents = documentsQuery.data ?? [];
   const selected = useMemo(
     () => documents.find((document) => document.id === selectedId) ?? documents[0] ?? null,
@@ -266,7 +271,19 @@ export default function PrescriptionReviewPage() {
             </div>
             {processMutation.error ? <p className="prescription-error">{processMutation.error.message}</p> : null}
             {reviewIssues.length ? <details className="prescription-issues"><summary><AlertTriangle size={18} /> {reviewIssues.length} validation item{reviewIssues.length === 1 ? "" : "s"} to resolve before approval</summary><div>{reviewIssues.map((issue) => <p key={`${issue.code}-${issue.page_number ?? "document"}-${issue.message}`}>{issue.page_number ? `Page ${issue.page_number}: ` : ""}{issue.message}</p>)}</div></details> : null}
-            <div className="prescription-split-view">
+            {selected.review && reviewedData.schema_version === 1 ? <LongitudinalDraftWorkspace
+              document={selected}
+              draft={reviewedData as LongitudinalIntakeDraft}
+              catalog={workspaceOptionsQuery.data ?? {}}
+              disabled={selected.review.status === "approved" || selected.review.status === "rejected"}
+              saving={saveReviewMutation.isPending}
+              error={reviewError || saveReviewMutation.error?.message}
+              onChange={(draft) => {
+                setReviewedData(draft);
+                setPatientId(draft.patient.match_status === "existing" && draft.patient.patient_id ? String(draft.patient.patient_id) : "");
+              }}
+              onSave={saveReview}
+            /> : <div className="prescription-split-view">
               <section className="prescription-source">
                 <div className="prescription-subheading"><div><h3>Source evidence</h3><p className="hero-text">Read pages in prescription order while reviewing.</p></div></div>
                 {isPdf && selected?.file ? <details className="prescription-original-file" open><summary>Original prescription PDF</summary><a className="secondary-button prescription-open-file" href={reviewMediaUrl(selected.file)} target="_blank" rel="noreferrer"><ExternalLink size={16} />Open in new tab</a>{pdfPreviewUrl ? <iframe title={`Original prescription: ${selected.original_filename}`} src={`${pdfPreviewUrl}#view=FitH`} className="prescription-pdf-viewer" /> : <p className="hero-text">{pdfLoadError ? "The inline preview is unavailable. Open the original PDF in a new tab." : "Loading original PDF…"}</p>}</details> : null}
@@ -299,7 +316,7 @@ export default function PrescriptionReviewPage() {
                 </div> : null}
                 {!selected.review && latestRun?.status !== "completed" ? <p className="hero-text">Run extraction to receive reviewable, source-linked clinical proposals. Approval never publishes clinical records.</p> : null}
               </section>
-            </div>
+            </div>}
           </>}
         </section>
       </section>
