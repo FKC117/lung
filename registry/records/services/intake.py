@@ -1,6 +1,8 @@
 """Adapter from the established New Entry request to the canonical intake draft."""
 from uuid import uuid4
 
+from rest_framework.exceptions import ValidationError
+
 from prescriptions.services.draft_schema import COLLECTIONS, empty_draft, empty_observation
 from prescriptions.services.option_resolver import OPTION_FIELDS
 from prescriptions.services.publish import persist_canonical_draft
@@ -21,6 +23,12 @@ def _record(values, collection):
 
 
 def manual_payload_to_draft(payload, *, draft=False):
+    def one(value, label):
+        if not isinstance(value, list):
+            return value
+        if len(value) > 1:
+            raise ValidationError({label: "Multiple selections are not supported by the current clinical model. Split them into separate records."})
+        return value[0] if value else None
     patient_values = {**(payload.get("patient") or {}), **(payload.get("history") or {})}
     patient_values.update({
         "alcohol_history": (payload.get("history") or {}).get("history_of_alcohol_consumption"),
@@ -49,15 +57,21 @@ def manual_payload_to_draft(payload, *, draft=False):
     add("cancer_markers", [{"marker": row.get("marker_name"), "value": row.get("marker_value"), "tested_on": row.get("tested_at")} for row in payload.get("cancer_markers") or []])
     add("molecular_tests", payload.get("molecular_tests") or [])
     for row in payload.get("treatment_cycles") or []:
-        add("treatments", [{"modality": (row.get("modalities") or [None])[0], "protocol": row.get("treatment_protocol"), "line_of_treatment": row.get("line_of_treatment"), "started_on": row.get("started_at"), "ended_on": row.get("ended_at"), "status": row.get("status"), "notes": row.get("course_notes") or row.get("chemotherapy_details"), "administrations": row.get("administrations") or []}])
+        treatment = _record({"modality": one(row.get("modalities"), "treatment modalities"), "protocol": row.get("treatment_protocol"), "line_of_treatment": row.get("line_of_treatment"), "started_on": row.get("started_at"), "ended_on": row.get("ended_at"), "status": row.get("status"), "notes": row.get("course_notes") or row.get("chemotherapy_details"), "administrations": row.get("administrations") or []}, "treatments")
+        observation["treatments"].append(treatment)
+        link = {"treatment_temp_id": treatment["temp_id"]}
+        add("recist_assessments", [{**link, "assessed_on": item.get("assessed_at"), "timepoint": item.get("timepoint") or "on_treatment", "target_lesion": item.get("target_lesion"), "non_target_lesion": item.get("non_target_lesion"), "new_lesion": item.get("new_lesion"), "overall_response": item.get("response_result"), "estimation_method": item.get("estimation_method"), "notes": item.get("notes")} for item in row.get("recist11_assessments", [])])
+        add("irecist_assessments", [{**link, "assessed_on": item.get("assessed_at"), "timepoint": item.get("timepoint") or "on_treatment", "target_lesion": item.get("target_lesion"), "non_target_lesion": item.get("non_target_lesion"), "new_lesion": item.get("new_lesion"), "overall_response": item.get("response_result"), "estimation_method": item.get("estimation_method"), "notes": item.get("notes")} for item in row.get("irecist_assessments", [])])
+        add("pathological_responses", [{**link, "assessed_on": item.get("assessed_at"), "timepoint": item.get("timepoint") or "post_treatment", "response_category": item.get("response_category"), "residual_viable_tumor_percentage": item.get("residual_viable_tumor_percentage"), "tumor_regression_grade": item.get("tumor_regression_grade"), "estimation_method": item.get("estimation_method"), "notes": item.get("notes")} for item in row.get("pathological_response_records", []) if item.get("assessed_at")])
     add("progression_records", payload.get("progression_records") or [])
     add("survival_records", payload.get("survival_followups") or [])
-    add("surgeries", [{"modality": row.get("surgery_modality"), "laterality": (row.get("lateralities") or [None])[0], "surgery_date": row.get("surgery_date"), "status": row.get("status"), "procedure_details": row.get("procedure_details"), "operative_findings": row.get("operative_findings"), "complications": row.get("complications"), "notes": row.get("notes")} for row in payload.get("surgeries") or []])
-    add("radiotherapies", [{"site": (row.get("sites") or [None])[0], "intent": row.get("radiotherapy_intent"), "modality": (row.get("modalities") or [None])[0], "started_on": row.get("started_at"), "ended_on": row.get("ended_at"), "dose_per_fraction_cgy": row.get("fraction_dose"), "planned_fractions": row.get("fraction_count"), "completed_fractions": row.get("completed_fractions"), "status": row.get("status"), "reason_for_stopping": row.get("reason_for_stopping"), "notes": row.get("notes")} for row in payload.get("radiotherapy_schedules") or []])
+    add("surgeries", [{"modality": row.get("surgery_modality"), "laterality": one(row.get("lateralities"), "surgery lateralities"), "surgery_date": row.get("surgery_date"), "status": row.get("status"), "procedure_details": row.get("procedure_details"), "operative_findings": row.get("operative_findings"), "complications": row.get("complications"), "notes": row.get("notes")} for row in payload.get("surgeries") or []])
+    add("radiotherapies", [{"site": one(row.get("sites"), "radiotherapy sites"), "intent": row.get("radiotherapy_intent"), "modality": one(row.get("modalities"), "radiotherapy modalities"), "started_on": row.get("started_at"), "ended_on": row.get("ended_at"), "dose_per_fraction_cgy": row.get("fraction_dose"), "planned_fractions": row.get("fraction_count"), "completed_fractions": row.get("completed_fractions"), "status": row.get("status"), "reason_for_stopping": row.get("reason_for_stopping"), "notes": row.get("notes")} for row in payload.get("radiotherapy_schedules") or []])
     draft_data["observations"] = [observation]
     return draft_data
 
 
 def persist_manual_entry(payload, *, user, draft=False):
     canonical = manual_payload_to_draft(payload, draft=draft)
-    return persist_canonical_draft(canonical, user=user), canonical
+    from records.models import ClinicalObservation
+    return persist_canonical_draft(canonical, user=user, observation_status=ClinicalObservation.Status.DRAFT if draft else ClinicalObservation.Status.PUBLISHED), canonical

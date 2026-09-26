@@ -30,6 +30,7 @@ from records.models import ClinicalObservation, Diagnosis, MolecularTest, Molecu
 
 from .models import ExtractionRun, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, RecordProvenance
 from .services.publish import publish_review
+from records.services.intake import manual_payload_to_draft
 from .services.draft_schema import COLLECTIONS, empty_draft, empty_observation, normalize_extraction, validate_draft
 from .services.extraction import validate_extraction
 from .services.intake_draft import build_intake_draft
@@ -418,6 +419,24 @@ class DraftApiTests(TestCase):
         self.assertEqual(patient.name, "After")
         self.assertEqual(ClinicalObservation.objects.count(), 1)
         self.assertEqual(PatientAnthropometry.objects.count(), 1)
+
+    def test_manual_save_draft_creates_a_draft_observation(self):
+        patient = Patient.objects.create(registration_no="REG-MANUAL-DRAFT", patient_id="PAT-MANUAL-DRAFT", name="Patient")
+        response = self.client.post("/api/records/intake/", {"payload": {"existing_patient_id": patient.pk, "patient": {}, "observation": {}}, "draft": True}, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["status"], "draft")
+        self.assertEqual(ClinicalObservation.objects.get().status, ClinicalObservation.Status.DRAFT)
+        self.assertIsNone(ClinicalObservation.objects.get().published_at)
+
+    def test_manual_conversion_preserves_response_assessments_and_rejects_multiple_options(self):
+        payload = {"patient": {"registration_no": "REG-MULTI", "patient_id": "PAT-MULTI", "name": "Patient"}, "treatment_cycles": [{"modalities": [1], "treatment_protocol": 2, "recist11_assessments": [{"assessed_at": "2026-01-02", "response_result": 3}], "irecist_assessments": [{"assessed_at": "2026-01-03", "response_result": 4}], "pathological_response_records": [{"assessed_at": "2026-01-04", "response_category": 5}]}]}
+        draft = manual_payload_to_draft(payload)
+        observation = draft["observations"][0]
+        self.assertEqual(len(observation["recist_assessments"]), 1)
+        self.assertEqual(len(observation["irecist_assessments"]), 1)
+        self.assertEqual(len(observation["pathological_responses"]), 1)
+        with self.assertRaisesMessage(Exception, "Multiple selections"):
+            manual_payload_to_draft({**payload, "radiotherapy_schedules": [{"sites": [1, 2]}]})
 
     def test_existing_patient_correction_is_applied_and_observation_mapping_is_durable(self):
         self.client.post(f"/api/prescriptions/documents/{self.document.pk}/start-review/")

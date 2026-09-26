@@ -4256,6 +4256,7 @@
 .clinical-intake-workspace { display: grid; gap: 1rem; margin-top: 1rem; }
 .clinical-intake-header { position: sticky; top: .5rem; z-index: 4; display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .9rem 1rem; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
 .clinical-intake-header h2, .clinical-intake-header p { margin: 0; }
+.clinical-dirty { display: inline-block; margin-top: .25rem; color: #f97316; font-weight: 700; }
 .clinical-intake-actions { display: flex; gap: .55rem; }
 .clinical-intake-grid { display: grid; grid-template-columns: minmax(230px,.64fr) minmax(210px,.52fr) minmax(500px,1.5fr); gap: 1rem; align-items: start; }
 .clinical-source-column, .clinical-timeline-column, .clinical-editor-column { min-width: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }

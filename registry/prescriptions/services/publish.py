@@ -222,8 +222,9 @@ def _persist_observation(data, index, patient, review, context):
         if existing:
             return existing.observation
     evidence = {item["evidence_id"]: item for item in data.get("evidence_refs", [])}
-    source_note = f"Published from prescription review {review.pk}" if review else "Published from manual New Entry"
-    observation = _save(ClinicalObservation(patient=patient, observed_at=_datetime(data.get("observed_at")), prescription_date=_date(data.get("prescription_date")), status=ClinicalObservation.Status.PUBLISHED, published_at=timezone.now(), published_by=context["user"], clinical_notes=f"{source_note} ({data.get('temporal_context', 'unknown')})."), f"observations.{index}", context)
+    source_note = f"Published from prescription review {review.pk}" if review else "Created from manual New Entry"
+    is_published = context["observation_status"] == ClinicalObservation.Status.PUBLISHED
+    observation = _save(ClinicalObservation(patient=patient, observed_at=_datetime(data.get("observed_at")), prescription_date=_date(data.get("prescription_date")), status=context["observation_status"], published_at=timezone.now() if is_published else None, published_by=context["user"] if is_published else None, clinical_notes=f"{source_note} ({data.get('temporal_context', 'unknown')})."), f"observations.{index}", context)
     _provenance(observation, review, context["run"], f"observations.{index}", data.get("evidence_refs", []), evidence, context["user"])
     if review:
         PrescriptionPublicationObservation.objects.create(review=review, draft_observation_temp_id=data["temp_id"], observation=observation)
@@ -252,11 +253,13 @@ def _persist_observation(data, index, patient, review, context):
 
 
 @transaction.atomic
-def persist_canonical_draft(draft, *, review=None, user):
+def persist_canonical_draft(draft, *, review=None, user, observation_status=ClinicalObservation.Status.PUBLISHED):
     """Shared validated persistence service. Any child failure rolls back all."""
     validate_draft(draft, document_id=review.document_id if review else None, check_database=True)
-    validate_selected_resolutions(draft); validate_approval_readiness(draft)
-    context = {"review": review, "user": user, "run": review.document.extraction_runs.filter(status="completed").first() if review else None, "counts": {}}
+    validate_selected_resolutions(draft)
+    if observation_status == ClinicalObservation.Status.PUBLISHED:
+        validate_approval_readiness(draft)
+    context = {"review": review, "user": user, "run": review.document.extraction_runs.filter(status="completed").first() if review else None, "counts": {}, "observation_status": observation_status}
     patient = _patient(draft, review, context)
     observations = [_persist_observation(item, i, patient, review, context) for i, item in enumerate(draft["observations"])]
     return patient, observations, context["counts"]

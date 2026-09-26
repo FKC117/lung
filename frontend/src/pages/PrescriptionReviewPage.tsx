@@ -114,6 +114,7 @@ export default function PrescriptionReviewPage() {
   const [reviewTab, setReviewTab] = useState("patient");
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [pdfLoadError, setPdfLoadError] = useState(false);
+  const [workspaceDirty, setWorkspaceDirty] = useState(false);
   const documentsQuery = useQuery({ queryKey: ["prescription-documents"], queryFn: fetchPrescriptionDocuments });
   const workspaceOptionsQuery = useQuery({ queryKey: ["prescription-workspace-options"], queryFn: () => fetchEntriesOptions(workspaceOptionResources), staleTime: 60_000 });
   const documents = documentsQuery.data ?? [];
@@ -144,6 +145,7 @@ export default function PrescriptionReviewPage() {
     setReadyToApprove(false);
     setReopenReason("");
     setReviewTab("patient");
+    setWorkspaceDirty(false);
   }, [selected?.id, selected?.review?.updated_at, latestRun?.id]);
   useEffect(() => {
     if (!isPdf || !selected?.file) {
@@ -188,7 +190,7 @@ export default function PrescriptionReviewPage() {
   });
   const refreshDocuments = async () => queryClient.invalidateQueries({ queryKey: ["prescription-documents"] });
   const startReviewMutation = useMutation({ mutationFn: startPrescriptionReview, onSuccess: refreshDocuments });
-  const saveReviewMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: number; data: Record<string, unknown> }) => updatePrescriptionReview(documentId, { reviewed_data: data as LongitudinalIntakeDraft, notes: reviewNotes, selected_patient: patientId ? Number(patientId) : null }), onSuccess: refreshDocuments });
+  const saveReviewMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: number; data: Record<string, unknown> }) => updatePrescriptionReview(documentId, { reviewed_data: data as LongitudinalIntakeDraft, notes: reviewNotes, selected_patient: patientId ? Number(patientId) : null }), onSuccess: async () => { setWorkspaceDirty(false); await refreshDocuments(); } });
   const approveReviewMutation = useMutation({ mutationFn: approvePrescriptionReview, onSuccess: refreshDocuments });
   const publishReviewMutation = useMutation({ mutationFn: publishPrescriptionReview, onSuccess: refreshDocuments });
   const reopenReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => reopenPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
@@ -198,6 +200,17 @@ export default function PrescriptionReviewPage() {
     if (!selected) return;
     setReviewError("");
     saveReviewMutation.mutate({ documentId: selected.id, data: reviewedData });
+  }
+
+  async function saveThenApprove() {
+    if (!selected) return;
+    setReviewError("");
+    try {
+      if (workspaceDirty) await saveReviewMutation.mutateAsync({ documentId: selected.id, data: reviewedData });
+      await approveReviewMutation.mutateAsync(selected.id);
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : "Unable to save and approve this review.");
+    }
   }
 
   async function correctInNewEntry() {
@@ -283,11 +296,13 @@ export default function PrescriptionReviewPage() {
               error={reviewError || saveReviewMutation.error?.message}
               onChange={(draft) => {
                 setReviewedData(draft);
+                setWorkspaceDirty(true);
                 setPatientId(draft.patient.match_status === "existing" && draft.patient.patient_id ? String(draft.patient.patient_id) : "");
               }}
               onSave={saveReview}
-              onApprove={() => selected && approveReviewMutation.mutate(selected.id)}
-              onPublish={() => selected && publishReviewMutation.mutate(selected.id)}
+              dirty={workspaceDirty}
+              onApprove={selected.review.status !== "approved" && selected.review.status !== "rejected" ? saveThenApprove : undefined}
+              onPublish={selected.review.status === "approved" ? () => publishReviewMutation.mutate(selected.id) : undefined}
               approving={approveReviewMutation.isPending}
               publishing={publishReviewMutation.isPending}
             /> : <div className="prescription-split-view">
