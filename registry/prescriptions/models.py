@@ -197,6 +197,17 @@ class PrescriptionReviewChange(models.Model):
     class Meta:
         ordering = ("-changed_at", "-id")
 
+
+class PrescriptionPublicationObservation(models.Model):
+    """Durable idempotency key for one reviewed draft observation."""
+    review = models.ForeignKey(PrescriptionReview, on_delete=models.CASCADE, related_name="publication_observations")
+    draft_observation_temp_id = models.CharField(max_length=128)
+    observation = models.OneToOneField("records.ClinicalObservation", on_delete=models.PROTECT, related_name="prescription_publication_mapping")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["review", "draft_observation_temp_id"], name="unique_review_draft_observation")]
+
 class RecordProvenance(models.Model):
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveBigIntegerField()

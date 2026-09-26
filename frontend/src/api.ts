@@ -1621,11 +1621,15 @@ function pick(source: RawRecord, keys: string[]) {
   return Object.fromEntries(keys.filter((key) => defined(source[key])).map((key) => [key, source[key]]));
 }
 
-/**
- * The entry screen predates the normalized REST API.  Keep its UI contract,
- * but persist each section through the current records endpoints.
- */
 async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean) {
+  return request<{ patient_id: number; patient_identifier: string; observation_id: number; status?: "draft" }>("/api/records/intake/", {
+    method: "POST",
+    body: JSON.stringify({ payload, draft }),
+  });
+}
+
+/** @deprecated Kept only as a migration reference; New Entry never calls it. */
+export async function legacyBrowserOrchestratedEntry(payload: EntriesIntakePayload, draft: boolean) {
   const patientInput = payload.patient ?? {};
   const observationInput = payload.observation ?? {};
   let patient: RawRecord;
@@ -1743,7 +1747,11 @@ async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean
     }
   }
   for (const row of payload.treatment_cycles ?? []) {
-    const modality = Array.isArray(row.modalities) ? row.modalities[0] : undefined;
+    const treatmentRow = row as RawRecord;
+    const treatmentModalities: unknown[] = Array.isArray(treatmentRow["modalities"])
+      ? treatmentRow["modalities"] as unknown[]
+      : [];
+    const modality = treatmentModalities[0];
     const protocol = row.treatment_protocol;
     if (modality && protocol) {
       const course = await post("/api/records/treatment-courses/", { observation: observationId, modality, protocol, line_of_treatment: row.line_of_treatment, started_on: row.started_at, ended_on: row.ended_at, status: row.status, reason_for_stopping: row.reason_for_stopping, notes: row.course_notes || row.chemotherapy_details });
@@ -1997,6 +2005,12 @@ export function approvePrescriptionReview(documentId: number) {
   return request<PrescriptionReview>(
     `/api/prescriptions/documents/${documentId}/approve-review/`,
     { method: "POST" },
+  );
+}
+
+export function publishPrescriptionReview(documentId: number) {
+  return request<{ observation_ids: number[]; counts: Record<string, number | boolean> }>(
+    `/api/prescriptions/documents/${documentId}/publish/`, { method: "POST" },
   );
 }
 

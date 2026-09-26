@@ -16,6 +16,7 @@ export interface ObservationFormSectionsProps {
   onChange: (observation: PrescriptionObservationDraft) => void;
   onMoveRecord?: (collection: ObservationCollection, tempId: string, targetId: string) => void;
   moveTargets?: Array<{ id: string; label: string }>;
+  collections?: readonly ObservationCollection[];
 }
 
 function scopedOptions(field: ClinicalFieldDefinition, record: PrescriptionDraftRecord, catalog: Catalog) {
@@ -34,7 +35,7 @@ function scopedCatalog(record: PrescriptionDraftRecord, catalog: Catalog) {
   }));
 }
 
-export function ObservationFormSections({ observation, catalog = {}, disabled, selectedRecords = new Set(), onToggleRecord, onChange, onMoveRecord, moveTargets = [] }: ObservationFormSectionsProps) {
+export function ObservationFormSections({ observation, catalog = {}, disabled, selectedRecords = new Set(), onToggleRecord, onChange, onMoveRecord, moveTargets = [], collections = observationCollections }: ObservationFormSectionsProps) {
   const updateRecord = (collection: ObservationCollection, tempId: string, updater: (record: PrescriptionDraftRecord) => PrescriptionDraftRecord) => onChange({ ...observation, [collection]: observation[collection].map((record) => record.temp_id === tempId ? updater(record) : record) });
   const removeRecord = (collection: ObservationCollection, tempId: string) => onChange({ ...observation, [collection]: observation[collection].filter((record) => record.temp_id !== tempId) });
   const addRecord = (collection: ObservationCollection) => onChange({ ...observation, [collection]: [...observation[collection], createBlankRecord(collection)] });
@@ -46,7 +47,7 @@ export function ObservationFormSections({ observation, catalog = {}, disabled, s
       <IntakeTextField label="Prescription date" type="date" disabled={disabled} value={observation.prescription_date ?? ""} onChange={(value) => onChange({ ...observation, prescription_date: value || null })} />
       <label className="filter-field"><span>Temporal context</span><select className="filter-select" disabled={disabled} value={observation.temporal_context} onChange={(event) => onChange({ ...observation, temporal_context: event.target.value as PrescriptionObservationDraft["temporal_context"] })}><option value="current">Current</option><option value="historical">Historical</option><option value="planned">Planned</option><option value="unknown">Unknown</option></select></label>
     </div><ClinicalSectionFields fields={anthropometrySectionSchema.fields} values={observation.anthropometry ?? {}} catalog={catalog} disabled={disabled} onChange={(field, value) => updateAnthropometry(field.key, String(value))} /></section>
-    {observationCollections.map((collection) => {
+    {collections.map((collection) => {
       const schema = observationFieldSchemas[collection];
       return <details className="panel entry-block intake-record-section" key={collection} open={observation[collection].length > 0}>
         <summary className="panel-heading"><div><p className="eyebrow">New Entry section</p><h3>{schema.label}</h3></div><span>{observation[collection].length} record{observation[collection].length === 1 ? "" : "s"}</span></summary>

@@ -4252,6 +4252,34 @@
   margin-top: 1rem;
 }
 
+/* Calm, desktop-first prescription workspace. */
+.clinical-intake-workspace { display: grid; gap: 1rem; margin-top: 1rem; }
+.clinical-intake-header { position: sticky; top: .5rem; z-index: 4; display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .9rem 1rem; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.clinical-intake-header h2, .clinical-intake-header p { margin: 0; }
+.clinical-intake-actions { display: flex; gap: .55rem; }
+.clinical-intake-grid { display: grid; grid-template-columns: minmax(230px,.64fr) minmax(210px,.52fr) minmax(500px,1.5fr); gap: 1rem; align-items: start; }
+.clinical-source-column, .clinical-timeline-column, .clinical-editor-column { min-width: 0; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.clinical-source-column, .clinical-timeline-column { position: sticky; top: 5.25rem; max-height: calc(100vh - 6rem); overflow: auto; padding: .75rem; }
+.clinical-source-column summary { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-weight: 750; cursor: pointer; list-style: none; }
+.clinical-pdf { width: 100%; min-height: 28rem; margin-top: .75rem; border: 0; border-radius: 10px; background: #fff; }
+.clinical-image { width: 100%; margin-top: .75rem; border-radius: 10px; }
+.clinical-evidence { display: grid; gap: .5rem; margin-top: .75rem; }
+.clinical-evidence p { margin: 0; padding: .55rem; border-left: 2px solid var(--accent); color: var(--text-muted); font-size: .8rem; line-height: 1.4; }
+.clinical-evidence small { display: block; margin-bottom: .2rem; color: var(--accent); }
+.clinical-column-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; }
+.clinical-timeline { display: grid; gap: .45rem; }
+.clinical-timeline button { display: grid; gap: .15rem; width: 100%; padding: .7rem; border: 1px solid transparent; border-radius: 10px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.clinical-timeline button:hover, .clinical-timeline button.is-selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.clinical-timeline span { color: var(--text-muted); font-size: .76rem; }.clinical-timeline strong { text-transform: capitalize; font-size: .88rem; }.clinical-timeline small { color: var(--text-muted); }
+.clinical-timeline-tools { display: grid; gap: .45rem; margin-top: 1rem; }
+.clinical-editor-column { padding: .85rem; }
+.clinical-section-tabs { display: flex; gap: .35rem; overflow-x: auto; margin-bottom: .85rem; border-bottom: 1px solid var(--border); }
+.clinical-section-tabs button { padding: .6rem .8rem; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer; white-space: nowrap; }
+.clinical-section-tabs button.is-active { border-color: var(--accent); color: var(--text); font-weight: 750; }
+.clinical-unresolved { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: .7rem .9rem; border: 1px solid rgba(249,115,22,.35); border-radius: 12px; color: var(--text-muted); font-size: .84rem; }.clinical-unresolved strong { color: #f97316; }
+@media (max-width: 1120px) { .clinical-intake-grid { grid-template-columns: minmax(210px,.55fr) minmax(430px,1.25fr); }.clinical-source-column { position: static; grid-column: 1 / -1; max-height: none; }.clinical-source-column details { display: grid; grid-template-columns: minmax(220px,.7fr) 1fr; gap: .75rem; }.clinical-source-column summary { grid-column: 1 / -1; }.clinical-pdf,.clinical-image { grid-row: 2; }.clinical-evidence { grid-column: 2; grid-row: 2; margin: 0; } }
+@media (max-width: 760px) { .clinical-intake-header { position: static; align-items: stretch; flex-direction: column; }.clinical-intake-actions { display: grid; grid-template-columns: repeat(3,1fr); }.clinical-intake-grid { grid-template-columns: 1fr; }.clinical-source-column,.clinical-timeline-column { position: static; max-height: none; }.clinical-source-column details { display: block; }.clinical-evidence { margin-top: .75rem; }.clinical-pdf { min-height: 20rem; } }
+
 .longitudinal-workspace-toolbar,
 .longitudinal-pane-title,
 .intake-record-heading,

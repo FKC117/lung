@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .api_views import (
+    IntakeSubmissionView,
     CancerMarkerResultViewSet,
     ClinicalObservationViewSet,
     ClinicalTNMStagingViewSet,
@@ -52,4 +53,4 @@ router.register("records/pathological-tnm-stagings", PathologicalTNMStagingViewS
 router.register("records/molecular-tests", MolecularTestViewSet, basename="molecular-test")
 router.register("records/molecular-test-results", MolecularTestResultViewSet, basename="molecular-test-result")
 
-urlpatterns = [path("", include(router.urls))]
+urlpatterns = [path("records/intake/", IntakeSubmissionView.as_view(), name="records-intake-submit"), path("", include(router.urls))]

@@ -402,6 +402,37 @@ class DraftApiTests(TestCase):
         review.refresh_from_db()
         self.assertIsNone(review.published_at)
 
+    def test_manual_entry_uses_the_canonical_publication_service(self):
+        patient = Patient.objects.create(registration_no="REG-MANUAL", patient_id="PAT-MANUAL", name="Before")
+        response = self.client.post("/api/records/intake/", {
+            "payload": {
+                "existing_patient_id": patient.pk,
+                "patient": {"name": "After"},
+                "observation": {"prescription_date": "2026-01-01"},
+                "history": {"height_cm": "170", "weight_kg": "70"},
+            },
+            "draft": False,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        patient.refresh_from_db()
+        self.assertEqual(patient.name, "After")
+        self.assertEqual(ClinicalObservation.objects.count(), 1)
+        self.assertEqual(PatientAnthropometry.objects.count(), 1)
+
+    def test_existing_patient_correction_is_applied_and_observation_mapping_is_durable(self):
+        self.client.post(f"/api/prescriptions/documents/{self.document.pk}/start-review/")
+        patient = Patient.objects.create(registration_no="REG-CORRECT", patient_id="PAT-CORRECT", name="Before")
+        review = PrescriptionReview.objects.get(document=self.document)
+        draft = deepcopy(review.reviewed_data)
+        draft["patient"] = {"match_status": "existing", "patient_id": patient.pk, "values": {"name": "After"}}
+        review.reviewed_data = draft; review.selected_patient = patient; review.status = PrescriptionReview.Status.APPROVED
+        review.save(update_fields=["reviewed_data", "selected_patient", "status", "updated_at"])
+        observations, _ = publish_review(review, self.user)
+        patient.refresh_from_db()
+        self.assertEqual(patient.name, "After")
+        self.assertEqual(review.publication_observations.count(), 1)
+        self.assertEqual(review.publication_observations.first().observation_id, observations[0].pk)
+
     def test_selected_patient_is_synchronized_into_draft(self):
         patient = Patient.objects.create(registration_no="REG-P", patient_id="PAT-P", name="Patient")
         self.client.post(f"/api/prescriptions/documents/{self.document.pk}/start-review/")

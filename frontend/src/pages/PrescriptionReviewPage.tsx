@@ -10,6 +10,7 @@ import {
   fetchEntriesOptions,
   fetchPrescriptionDocuments,
   processPrescriptionDocument,
+  publishPrescriptionReview,
   rejectPrescriptionReview,
   reopenPrescriptionReview,
   startPrescriptionReview,
@@ -189,6 +190,7 @@ export default function PrescriptionReviewPage() {
   const startReviewMutation = useMutation({ mutationFn: startPrescriptionReview, onSuccess: refreshDocuments });
   const saveReviewMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: number; data: Record<string, unknown> }) => updatePrescriptionReview(documentId, { reviewed_data: data as LongitudinalIntakeDraft, notes: reviewNotes, selected_patient: patientId ? Number(patientId) : null }), onSuccess: refreshDocuments });
   const approveReviewMutation = useMutation({ mutationFn: approvePrescriptionReview, onSuccess: refreshDocuments });
+  const publishReviewMutation = useMutation({ mutationFn: publishPrescriptionReview, onSuccess: refreshDocuments });
   const reopenReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => reopenPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
   const rejectReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => rejectPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
 
@@ -284,6 +286,10 @@ export default function PrescriptionReviewPage() {
                 setPatientId(draft.patient.match_status === "existing" && draft.patient.patient_id ? String(draft.patient.patient_id) : "");
               }}
               onSave={saveReview}
+              onApprove={() => selected && approveReviewMutation.mutate(selected.id)}
+              onPublish={() => selected && publishReviewMutation.mutate(selected.id)}
+              approving={approveReviewMutation.isPending}
+              publishing={publishReviewMutation.isPending}
             /> : <div className="prescription-split-view">
               <section className="prescription-source">
                 <div className="prescription-subheading"><div><h3>Source evidence</h3><p className="hero-text">Read pages in prescription order while reviewing.</p></div></div>

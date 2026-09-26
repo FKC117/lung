@@ -5,6 +5,7 @@ for a human-approved canonical draft, and intentionally uses selected option
 IDs rather than extracted option names.
 """
 from datetime import date, datetime
+from uuid import uuid4
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.contenttypes.models import ContentType
@@ -24,7 +25,7 @@ from records.models import (
     TreatmentAdministration, TreatmentCourse,
 )
 from records.services.molecular import finalize_molecular_test
-from prescriptions.models import PrescriptionReview, RecordProvenance
+from prescriptions.models import PrescriptionPublicationObservation, PrescriptionReview, RecordProvenance
 from .draft_schema import COLLECTIONS, validate_draft
 from .option_resolver import OPTION_FIELDS, validate_approval_readiness, validate_selected_resolutions
 
@@ -76,6 +77,7 @@ def _options(record, field, collection):
 
 def _save(instance, path, context):
     try:
+        instance.full_clean()
         instance.save()
     except DjangoValidationError as exc:
         raise ValidationError({path: getattr(exc, "message_dict", exc.messages)}) from exc
@@ -84,6 +86,8 @@ def _save(instance, path, context):
 
 
 def _provenance(instance, review, run, path, evidence_ids, evidence_by_id, user):
+    if review is None:
+        return
     # Older normalized drafts may retain inline observation evidence while new
     # drafts use evidence IDs.  Preserve either representation without letting
     # audit metadata affect validated clinical values.
@@ -114,7 +118,23 @@ PATIENT_OPTIONS = {"sex": "sexes", "district": "districts", "thana": "thanas", "
 def _patient(draft, review, context):
     data = draft["patient"]
     if data["match_status"] == "existing":
-        return review.selected_patient or Patient.objects.get(pk=data["patient_id"])
+        patient = (review.selected_patient if review else None) or Patient.objects.get(pk=data["patient_id"])
+        values = data.get("values", {})
+        # A reviewer-approved correction is part of publication, not silently
+        # discarded.  Identity keys are deliberately immutable for a match.
+        conflicting = {key for key in ("registration_no", "patient_id") if values.get(key) and values[key] != getattr(patient, key)}
+        if conflicting:
+            raise ValidationError({"patient": f"Matched patient identity conflicts: {', '.join(sorted(conflicting))}. Select another patient or resolve the draft."})
+        attrs = _plain(values, PATIENT_FIELDS - {"registration_no", "patient_id"})
+        for field, resource in PATIENT_OPTIONS.items():
+            if values.get(field) not in (None, ""):
+                attrs[field] = OPTION_RESOURCES[resource].objects.get(pk=values[field])
+        if attrs:
+            for field, value in attrs.items():
+                setattr(patient, field, value)
+            _save(patient, "patient", context)
+            _provenance(patient, review, context["run"], "patient.correction", [], {}, context["user"])
+        return patient
     if data["match_status"] != "new":
         raise ValidationError({"patient": "Patient matching must be resolved before publication."})
     values = data["values"]
@@ -127,8 +147,9 @@ def _patient(draft, review, context):
             attrs[field] = OPTION_RESOURCES[resource].objects.get(pk=values[field])
     patient = _save(Patient(**attrs), "patient", context)
     _provenance(patient, review, context["run"], "patient", [], {}, context["user"])
-    review.selected_patient = patient
-    review.save(update_fields=["selected_patient", "updated_at"])
+    if review:
+        review.selected_patient = patient
+        review.save(update_fields=["selected_patient", "updated_at"])
     return patient
 
 
@@ -151,10 +172,14 @@ def _attrs(values, record, collection, plain, option_fields):
 
 
 def _persist_record(collection, values, record, observation, courses, delayed, path, context):
+    def child(instance, child_path):
+        item = _save(instance, child_path, context)
+        _provenance(item, context["review"], context["run"], child_path, record.get("evidence_refs", []), {}, context["user"])
+        return item
     if collection == "comorbidities": return _save(PatientComorbidity(observation=observation, **_attrs(values, record, collection, {"diagnosed_on", "is_active", "notes"}, {"comorbidity"})), path, context)
     if collection == "diagnoses":
         item = _save(Diagnosis(observation=observation, **_attrs(values, record, collection, {"diagnosed_on", "diagnosis_in_details"}, {"disease_group", "disease_subgroup", "primary_site", "laterality"})), path, context)
-        for site in _options(record, "metastatic_sites", collection): _save(MetastaticSiteRecord(diagnosis=item, site=site), f"{path}.metastatic_sites", context)
+        for site in _options(record, "metastatic_sites", collection): child(MetastaticSiteRecord(diagnosis=item, site=site), f"{path}.metastatic_sites")
         return item
     if collection == "histopathologies": return _save(Histopathology(observation=observation, **_attrs(values, record, collection, {"biopsy_date", "report_date", "report_summary"}, {"histopathology_details", "histopathology_type", "histopathology_site", "histopathology_grade"})), path, context)
     if collection == "ihc_results": return _save(IHCResult(observation=observation, **_attrs(values, record, collection, {"tested_at", "percentage", "notes"}, {"marker", "result"})), path, context)
@@ -170,7 +195,7 @@ def _persist_record(collection, values, record, observation, courses, delayed, p
             if admin.get("drug"):
                 admin_attrs = _plain(admin, {"administered_on", "cycle_number", "day_number", "dose", "dose_unit", "status", "notes"})
                 if "administered_on" in admin_attrs: admin_attrs["administered_on"] = _date(admin_attrs["administered_on"])
-                _save(TreatmentAdministration(treatment_course=item, observation=observation, drug=OPTION_RESOURCES["treatment-drugs"].objects.get(pk=admin["drug"]), **admin_attrs), f"{path}.administrations", context)
+                child(TreatmentAdministration(treatment_course=item, observation=observation, drug=OPTION_RESOURCES["treatment-drugs"].objects.get(pk=admin["drug"]), **admin_attrs), f"{path}.administrations")
         return item
     if collection == "surgeries": return _save(SurgeryRecord(observation=observation, **_attrs(values, record, collection, {"surgery_date", "status", "procedure_details", "operative_findings", "complications", "notes"}, {"modality", "laterality"})), path, context)
     if collection == "radiotherapies": return _save(RadiotherapyCourse(observation=observation, **_attrs(values, record, collection, {"started_on", "ended_on", "dose_per_fraction_cgy", "planned_fractions", "completed_fractions", "status", "reason_for_stopping", "notes"}, {"site", "intent", "modality"})), path, context)
@@ -183,7 +208,7 @@ def _persist_record(collection, values, record, observation, courses, delayed, p
         for result in values.get("results", [values]):
             result_record = record if result is values else {**record, "values": result}
             result_attrs = _attrs(result, result_record, collection, {"dna_change", "protein_change", "common_name", "variant_allele_frequency", "copy_number", "origin", "notes"}, {"panel_target", "gene", "exon", "alteration_type", "result", "partner_gene", "clinical_significance"})
-            _save(MolecularTestResult(molecular_test=test, **result_attrs), path, context)
+            child(MolecularTestResult(molecular_test=test, **result_attrs), f"{path}.results")
         if values.get("status") == MolecularTest.Status.COMPLETED:
             existing = set(test.results.values_list("pk", flat=True)); finalize_molecular_test(test.pk)
             for result in test.results.exclude(pk__in=existing): _provenance(result, context["review"], context["run"], f"{path}.derived", record.get("evidence_refs", []), {}, context["user"])
@@ -192,9 +217,16 @@ def _persist_record(collection, values, record, observation, courses, delayed, p
 
 
 def _persist_observation(data, index, patient, review, context):
+    if review:
+        existing = PrescriptionPublicationObservation.objects.filter(review=review, draft_observation_temp_id=data["temp_id"]).select_related("observation").first()
+        if existing:
+            return existing.observation
     evidence = {item["evidence_id"]: item for item in data.get("evidence_refs", [])}
-    observation = _save(ClinicalObservation(patient=patient, observed_at=_datetime(data.get("observed_at")), prescription_date=_date(data.get("prescription_date")), status=ClinicalObservation.Status.PUBLISHED, published_at=timezone.now(), published_by=context["user"], clinical_notes=f"Published from prescription review {review.pk} ({data.get('temporal_context', 'unknown')})."), f"observations.{index}", context)
+    source_note = f"Published from prescription review {review.pk}" if review else "Published from manual New Entry"
+    observation = _save(ClinicalObservation(patient=patient, observed_at=_datetime(data.get("observed_at")), prescription_date=_date(data.get("prescription_date")), status=ClinicalObservation.Status.PUBLISHED, published_at=timezone.now(), published_by=context["user"], clinical_notes=f"{source_note} ({data.get('temporal_context', 'unknown')})."), f"observations.{index}", context)
     _provenance(observation, review, context["run"], f"observations.{index}", data.get("evidence_refs", []), evidence, context["user"])
+    if review:
+        PrescriptionPublicationObservation.objects.create(review=review, draft_observation_temp_id=data["temp_id"], observation=observation)
     if data.get("anthropometry"):
         anthropometry = data["anthropometry"]
         item = _save(PatientAnthropometry(
@@ -220,11 +252,11 @@ def _persist_observation(data, index, patient, review, context):
 
 
 @transaction.atomic
-def persist_canonical_draft(draft, *, review, user):
+def persist_canonical_draft(draft, *, review=None, user):
     """Shared validated persistence service. Any child failure rolls back all."""
-    validate_draft(draft, document_id=review.document_id, check_database=True)
+    validate_draft(draft, document_id=review.document_id if review else None, check_database=True)
     validate_selected_resolutions(draft); validate_approval_readiness(draft)
-    context = {"review": review, "user": user, "run": review.document.extraction_runs.filter(status="completed").first(), "counts": {}}
+    context = {"review": review, "user": user, "run": review.document.extraction_runs.filter(status="completed").first() if review else None, "counts": {}}
     patient = _patient(draft, review, context)
     observations = [_persist_observation(item, i, patient, review, context) for i, item in enumerate(draft["observations"])]
     return patient, observations, context["counts"]
@@ -236,9 +268,7 @@ def publish_review(review, user):
     # cannot lock the nullable side of that outer join.
     review = PrescriptionReview.objects.select_for_update(of=("self",)).select_related("document", "selected_patient").get(pk=review.pk)
     if review.published_at:
-        content_type = ContentType.objects.get_for_model(ClinicalObservation)
-        ids = RecordProvenance.objects.filter(document=review.document, content_type=content_type).values_list("object_id", flat=True)
-        return list(ClinicalObservation.objects.filter(pk__in=ids)), {"already_published": True}
+        return list(ClinicalObservation.objects.filter(prescription_publication_mapping__review=review)), {"already_published": True}
     if review.status != PrescriptionReview.Status.APPROVED: raise ValidationError("Only approved reviews can be published.")
     patient, observations, counts = persist_canonical_draft(review.reviewed_data, review=review, user=user)
     review.published_at = timezone.now(); review.published_by = user; review.selected_patient = patient

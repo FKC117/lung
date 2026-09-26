@@ -2,6 +2,7 @@
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import permissions, status, viewsets
+from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
@@ -10,6 +11,20 @@ from rest_framework.response import Response
 from .models import CancerMarkerResult, ClinicalObservation, ClinicalTNMStaging, Diagnosis, DiseaseProgressionRecord, Histopathology, IHCResult, IRECISTAssessment, MetastaticSiteRecord, MolecularTest, MolecularTestResult, PathologicalResponseAssessment, PathologicalStagingResult, PathologicalTNMStaging, Patient, PatientAnthropometry, PatientComorbidity, RadiotherapyCourse, RECIST11Assessment, SurgeryRecord, SurvivalFollowUp, TreatmentAdministration, TreatmentCourse
 from .serializers import RadiotherapyCourseSerializer, TreatmentAdministrationSerializer, TreatmentCourseSerializer, build_assessment_serializer, build_outcome_serializer, build_record_serializer
 from .services.molecular import finalize_molecular_test
+from .services.intake import persist_manual_entry
+
+
+class IntakeSubmissionView(APIView):
+    """One atomic backend submission for the established manual New Entry UI."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        is_draft = bool(request.data.get("draft"))
+        try:
+            (patient, observations, counts), _ = persist_manual_entry(request.data.get("payload") or request.data, user=request.user, draft=is_draft)
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages)
+        return Response({"patient_id": patient.pk, "patient_identifier": patient.patient_id, "observation_id": observations[0].pk if observations else None, "observation_ids": [item.pk for item in observations], "counts": counts, "status": "draft" if is_draft else "published"}, status=status.HTTP_201_CREATED)
 
 
 class RecordPagination(PageNumberPagination):
