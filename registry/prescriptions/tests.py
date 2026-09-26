@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from options.models import (
     DiagnosisDiseaseGroup,
     DiagnosisDiseaseSubgroup,
+    DiagnosisMetastaticSite,
     District,
     Doctor,
     MolecularAlterationType,
@@ -19,6 +20,7 @@ from options.models import (
     MolecularPathologyGene,
     MolecularPathologyMethod,
     MolecularPathologyResult,
+    ProgressionSite,
     Thana,
     TreatmentDrug,
     TreatmentProtocol,
@@ -266,6 +268,26 @@ class OptionResolutionTests(TestCase):
         draft["observations"].append(observation)
         with self.assertRaisesMessage(ValidationError, "no active controlled option"):
             validate_approval_readiness(draft)
+
+    def test_multi_option_resolutions_validate_real_option_ids(self):
+        metastatic_site = DiagnosisMetastaticSite.objects.create(name="Liver")
+        progression_site = ProgressionSite.objects.create(name="Bone")
+        draft = empty_draft(26)
+        draft["patient"]["match_status"] = "new"
+        observation = empty_observation()
+        diagnosis = record(values={"metastatic_sites": [metastatic_site.pk]})
+        diagnosis["resolutions"] = {"metastatic_sites": {**resolution("diagnosis-metastatic-sites", None), "status": "resolved", "option_ids": [metastatic_site.pk]}}
+        progression = record(values={"progression_sites": [progression_site.pk]})
+        progression["resolutions"] = {"progression_sites": {**resolution("progression-sites", None), "status": "resolved", "option_ids": [progression_site.pk]}}
+        observation["diagnoses"].append(diagnosis)
+        observation["progression_records"].append(progression)
+        draft["observations"].append(observation)
+        validate_selected_resolutions(draft)
+        validate_approval_readiness(draft)
+
+        diagnosis["resolutions"]["metastatic_sites"]["option_ids"] = [999999]
+        with self.assertRaisesMessage(ValidationError, "does not exist"):
+            validate_selected_resolutions(draft)
 
 
 class DraftApiTests(TestCase):

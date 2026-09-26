@@ -38,6 +38,8 @@ import {
   saveEntriesDraft,
 } from "../api";
 import { IntakeSelectField, IntakeTextArea, IntakeTextField } from "../components/intake/SharedIntakeFields";
+import { ClinicalSectionFields } from "../components/intake/ClinicalSectionFields";
+import { anthropometrySectionSchema, observationFieldSchemas } from "../components/intake/observationFieldSchema";
 
 type MolecularFindingRow = {
   panel_target: string;
@@ -56,9 +58,9 @@ type MolecularFindingRow = {
 };
 type MarkerRow = {
   marker_name: string;
-  marker_unit: string;
   marker_value: string;
   tested_at: string;
+  notes: string;
 };
 type SmokingRow = {
   smoking_history: string;
@@ -98,6 +100,7 @@ type IHCPanelRow = {
 type PastTreatmentRow = { recorded_at: string; details: string };
 type ResponseRow = {
   assessed_at: string;
+  timepoint: string;
   target_lesion: string;
   non_target_lesion: string;
   new_lesion: string;
@@ -107,6 +110,7 @@ type ResponseRow = {
   response_category: string;
   residual_viable_tumor_percentage: string;
   tumor_regression_grade: string;
+  notes: string;
 };
 type ProtocolBuilderRow = {
   protocol_type: "primary" | "followed_by";
@@ -195,6 +199,7 @@ const steps = [
   "Treatment and outcomes",
 ];
 const stepTargets = [0, 2, 3];
+const sectionOptionResources = (sections: Array<keyof typeof observationFieldSchemas>) => Array.from(new Set(sections.flatMap((section) => observationFieldSchemas[section].fields.flatMap((field) => field.resource ? [field.resource] : []))));
 const optionResourcesByStep: Record<number, string[]> = {
   0: [
     "sexes",
@@ -214,61 +219,8 @@ const optionResourcesByStep: Record<number, string[]> = {
     "vaccination-doses",
     "comorbidities",
   ],
-  2: [
-    "diagnosis-disease-groups",
-    "diagnosis-disease-subgroups",
-    "diagnosis-primary-sites",
-    "diagnosis-metastatic-sites",
-    "diagnosis-lateralities",
-    "histopathology-details",
-    "histopathology-types",
-    "histopathology-sites",
-    "histopathology-grades",
-    "ihc-cycles",
-    "ihc-cycle-results",
-    "ihc-staging-cycles",
-    "ihc-staging-cycle-results",
-    "tnm-t",
-    "tnm-n",
-    "tnm-m",
-    "tnm-stages",
-    "molecular-methods",
-    "molecular-specimens",
-    "molecular-panels",
-    "molecular-panel-versions",
-    "molecular-panel-targets",
-    "molecular-genes",
-    "molecular-exons",
-    "molecular-alteration-types",
-    "molecular-results",
-    "molecular-clinical-significances",
-    "cancer-marker-names",
-  ],
-  3: [
-    "treatment-modalities",
-    "treatment-protocols",
-    "treatment-drugs",
-    "lines-of-treatment",
-    "disease-progression-statuses",
-    "survival-statuses",
-    "recist-target-lesions",
-    "recist-non-target-lesions",
-    "recist-new-lesions",
-    "recist-response-results",
-    "irecist-target-lesions",
-    "irecist-non-target-lesions",
-    "irecist-new-lesions",
-    "irecist-response-results",
-    "progression-sites",
-    "response-estimation-methods",
-    "pathological-response-categories",
-    "tumor-regression-grades",
-    "surgery-modalities",
-    "surgery-lateralities",
-    "radiotherapy-sites",
-    "radiotherapy-intents",
-    "radiotherapy-modalities",
-  ],
+  2: sectionOptionResources(["diagnoses", "histopathologies", "ihc_results", "pathological_staging_results", "clinical_tnm_stagings", "pathological_tnm_stagings", "molecular_tests", "cancer_markers"]),
+  3: sectionOptionResources(["treatments", "surgeries", "radiotherapies", "recist_assessments", "irecist_assessments", "pathological_responses", "progression_records", "survival_records"]),
 };
 
 const blankMolecularFinding = (): MolecularFindingRow => ({
@@ -291,9 +243,9 @@ const blankMolecularTest = (): MolecularTestRow => ({
 });
 const blankMarker = (): MarkerRow => ({
   marker_name: "",
-  marker_unit: "",
   marker_value: "",
   tested_at: "",
+  notes: "",
 });
 const blankSmoking = (): SmokingRow => ({
   smoking_history: "",
@@ -336,6 +288,7 @@ const blankPastTreatment = (): PastTreatmentRow => ({
 });
 const blankResponse = (): ResponseRow => ({
   assessed_at: "",
+  timepoint: "",
   target_lesion: "",
   non_target_lesion: "",
   new_lesion: "",
@@ -345,6 +298,7 @@ const blankResponse = (): ResponseRow => ({
   response_category: "",
   residual_viable_tumor_percentage: "",
   tumor_regression_grade: "",
+  notes: "",
 });
 const blankProtocolBuilder = (
   protocol_type: ProtocolBuilderRow["protocol_type"] = "primary",
@@ -642,14 +596,6 @@ function SelectField({
   return <IntakeSelectField label={label} value={value} options={options} required={required} onChange={onChange} optionLabel={optionLabel} help={fieldHelper(label, undefined, true)} />;
 }
 
-function StatusField({ label, value, onChange, choices }: { label: string; value: string; onChange: (value: string) => void; choices: Array<[string, string]> }) {
-  return <label className="filter-field"><span>{label}</span><select className="filter-select" value={value} onChange={(event) => onChange(event.target.value)}>{choices.map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select><p className="entry-field-help">Uses the current backend status value.</p></label>
-}
-
-const courseStatuses: Array<[string, string]> = [["planned", "Planned"], ["active", "Active"], ["completed", "Completed"], ["stopped", "Stopped"], ["held", "Held"], ["cancelled", "Cancelled"]]
-const surgeryStatuses: Array<[string, string]> = [["planned", "Planned"], ["performed", "Performed"], ["cancelled", "Cancelled"]]
-const molecularQcStatuses: Array<[string, string]> = [["pending", "Pending"], ["passed", "Passed"], ["partial", "Partially passed"], ["failed", "Failed"]]
-
 function TextField({
   label,
   value,
@@ -868,95 +814,14 @@ function ResponseAssessmentCard({
     result: string;
   };
 }) {
+  void resources;
+  const section = title === "iRECIST" ? observationFieldSchemas.irecist_assessments : title === "RECIST 1.1" ? observationFieldSchemas.recist_assessments : observationFieldSchemas.pathological_responses;
+  const catalog = Object.fromEntries(section.fields.flatMap((field) => field.resource ? [[field.resource, getOptions(field.resource)]] : []));
   return (
     <section className="entry-response-card">
       {showTitle ? <h4>{title}</h4> : null}
-      <div className="entry-grid">
-        <SelectField
-          label="Target lesion"
-          value={row.target_lesion}
-          options={getOptions(resources.target)}
-          onChange={(target_lesion) => onChange({ ...row, target_lesion })}
-        />
-        <SelectField
-          label="Non-target lesion"
-          value={row.non_target_lesion}
-          options={getOptions(resources.nonTarget)}
-          onChange={(non_target_lesion) =>
-            onChange({ ...row, non_target_lesion })
-          }
-        />
-        <SelectField
-          label="New lesions"
-          value={row.new_lesion}
-          options={getOptions(resources.newLesion)}
-          onChange={(new_lesion) => onChange({ ...row, new_lesion })}
-        />
-        <TextField
-          label="Assessment date"
-          type="date"
-          value={row.assessed_at}
-          onChange={(assessed_at) => onChange({ ...row, assessed_at })}
-        />
-        <SelectField
-          label="Progression site"
-          value={row.progression_sites[0] || ""}
-          options={getOptions("progression-sites")}
-          onChange={(value) =>
-            onChange({ ...row, progression_sites: value ? [value] : [] })
-          }
-        />
-        <SelectField
-          label="Method of estimation"
-          value={row.estimation_method}
-          options={getOptions("response-estimation-methods")}
-          onChange={(estimation_method) =>
-            onChange({ ...row, estimation_method })
-          }
-        />
-        <SelectField
-          label="Response result"
-          value={row.response_result}
-          options={getOptions(resources.result)}
-          onChange={(response_result) => onChange({ ...row, response_result })}
-        />
-      </div>
+      <ClinicalSectionFields fields={section.fields} values={row} catalog={catalog} binding="manual" onChange={(field, value) => onChange({ ...row, [field.manualKey ?? field.key]: value })} />
     </section>
-  );
-}
-
-function RadioGroup({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  options: EntryOption[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <fieldset className="filter-field entry-span-full entry-radio-group">
-      <legend>{label}</legend>
-      <div className="entry-checkbox-grid">
-        {options.map((option) => {
-          const id = String(option.id);
-          return (
-            <label className="entry-checkbox" key={id}>
-              <input
-                type="radio"
-                name="histopathology-grade"
-                value={id}
-                checked={value === id}
-                onChange={() => onChange(id)}
-              />
-              <span>{optionLabel(option)}</span>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
   );
 }
 
@@ -1351,6 +1216,7 @@ export default function EntriesPatientEntryPage() {
   const [covidHistory, setCovidHistory] = useState<CovidRow[]>([blankCovid()]);
   const [comorbidities, setComorbidities] = useState<string[]>([]);
   const [diagnosis, setDiagnosis] = useState({
+    diagnosed_on: "",
     disease_group: "",
     disease_subgroup: "",
     primary_site: "",
@@ -1362,6 +1228,8 @@ export default function EntriesPatientEntryPage() {
     histopathology_site: "",
     histopathology_grade: "",
     biopsy_date: "",
+    report_date: "",
+    report_summary: "",
   });
   const [clinicalTnm, setClinicalTnm] = useState<TnmRow[]>([blankTnm()]);
   const [pathologicalTnm, setPathologicalTnm] = useState<TnmRow[]>([
@@ -1693,6 +1561,7 @@ export default function EntriesPatientEntryPage() {
       const savedDiagnosis = payload.diagnoses[0] as Record<string, unknown>;
       setDiagnosis((current) => ({
         ...current,
+        diagnosed_on: String(savedDiagnosis.diagnosed_on ?? ""),
         disease_group: String(savedDiagnosis.disease_group ?? ""),
         disease_subgroup: String(savedDiagnosis.disease_subgroup ?? ""),
         primary_site: String(savedDiagnosis.primary_site ?? ""),
@@ -1715,6 +1584,7 @@ export default function EntriesPatientEntryPage() {
       setDiagnosis((current) => ({
         ...current,
         biopsy_date: String(savedHistopathology.biopsy_date ?? ""),
+        report_date: String(savedHistopathology.report_date ?? ""),
         histopathology_details: String(
           savedHistopathology.histopathology_details ?? "",
         ),
@@ -1727,6 +1597,7 @@ export default function EntriesPatientEntryPage() {
         histopathology_grade: String(
           savedHistopathology.histopathology_grade ?? "",
         ),
+        report_summary: String(savedHistopathology.report_summary ?? ""),
       }));
     }
     setDraftObservationId(draft.observation_id);
@@ -1790,26 +1661,10 @@ export default function EntriesPatientEntryPage() {
           return `${builder.protocol_type === "followed_by" ? "Followed by " : ""}${names}${builder.cycle_no ? ` ${builder.cycle_no} cycle${builder.cycle_no === "1" ? "" : "s"}` : ""}`;
         })
         .join("; ");
-    const tnmPayload = (rows: TnmRow[], resource: string) =>
+    const tnmPayload = (rows: TnmRow[]) =>
       rows
         .filter((row) => row.t || row.n || row.m || row.stage || row.staged_at)
-        .map((row) => {
-          const staging = getOptions(resource).find(
-            (option) =>
-              String(option.t ?? "") === row.t &&
-              String(option.n ?? "") === row.n &&
-              String(option.m ?? "") === row.m &&
-              String(option.stage ?? "") === row.stage,
-          );
-          return compact({
-            staging: staging?.id,
-            raw_t: optionName("tnm-t", row.t),
-            raw_n: optionName("tnm-n", row.n),
-            raw_m: optionName("tnm-m", row.m),
-            raw_stage: optionName("tnm-stages", row.stage),
-            staged_at: row.staged_at,
-          });
-        });
+        .map((row) => compact({ t: toNumber(row.t), n: toNumber(row.n), m: toNumber(row.m), stage: toNumber(row.stage), staged_on: row.staged_at }));
     const molecularTests = molecular
       .filter((test) => test.panel_version || test.method || test.findings.some((finding) => finding.gene))
       .map((test) => compact({
@@ -1840,6 +1695,7 @@ export default function EntriesPatientEntryPage() {
       return [
         compact({
           assessed_at: row.assessed_at,
+          timepoint: row.timepoint,
           target_lesion: toNumber(row.target_lesion),
           non_target_lesion: toNumber(row.non_target_lesion),
           new_lesion: toNumber(row.new_lesion),
@@ -1849,6 +1705,7 @@ export default function EntriesPatientEntryPage() {
           response_category: toNumber(row.response_category),
           residual_viable_tumor_percentage: toNumber(row.residual_viable_tumor_percentage),
           tumor_regression_grade: toNumber(row.tumor_regression_grade),
+          notes: row.notes,
         }),
       ];
     };
@@ -1944,6 +1801,7 @@ export default function EntriesPatientEntryPage() {
         diagnosis.disease_group || diagnosis.primary_site
           ? [
               compact({
+                diagnosed_on: diagnosis.diagnosed_on,
                 disease_group: toNumber(diagnosis.disease_group),
                 disease_subgroup: toNumber(diagnosis.disease_subgroup),
                 primary_site: toNumber(diagnosis.primary_site),
@@ -1958,20 +1816,19 @@ export default function EntriesPatientEntryPage() {
           ? [
               compact({
                 biopsy_date: diagnosis.biopsy_date,
+                report_date: diagnosis.report_date,
                 histopathology_details: toNumber(
                   diagnosis.histopathology_details,
                 ),
                 histopathology_type: toNumber(diagnosis.histopathology_type),
                 histopathology_site: toNumber(diagnosis.histopathology_site),
                 histopathology_grade: toNumber(diagnosis.histopathology_grade),
+                report_summary: diagnosis.report_summary,
               }),
             ]
           : [],
-      clinical_tnm_stagings: tnmPayload(clinicalTnm, "clinical-tnm-stagings"),
-      pathological_tnm_stagings: tnmPayload(
-        pathologicalTnm,
-        "pathological-tnm-stagings",
-      ),
+      clinical_tnm_stagings: tnmPayload(clinicalTnm),
+      pathological_tnm_stagings: tnmPayload(pathologicalTnm),
       pathological_staging_details: Object.values(pathologicalDetails).some(
         Boolean,
       )
@@ -1984,7 +1841,6 @@ export default function EntriesPatientEntryPage() {
           compact({
             ...row,
             marker_name: toNumber(row.marker_name),
-            marker_unit: toNumber(row.marker_unit),
             marker_value: toNumber(row.marker_value),
           }),
         ),
@@ -2677,22 +2533,7 @@ export default function EntriesPatientEntryPage() {
                     setHistory({ ...history, dietary_habits: value })
                   }
                 />
-                <TextField
-                  label="Height (cm)"
-                  type="number"
-                  value={history.height_cm}
-                  onChange={(value) =>
-                    setHistory({ ...history, height_cm: value })
-                  }
-                />
-                <TextField
-                  label="Weight (kg)"
-                  type="number"
-                  value={history.weight_kg}
-                  onChange={(value) =>
-                    setHistory({ ...history, weight_kg: value })
-                  }
-                />
+                <ClinicalSectionFields fields={anthropometrySectionSchema.fields} values={history} binding="manual" onChange={(field, value) => setHistory({ ...history, [field.manualKey ?? field.key]: value })} />
                 <SelectField
                   label="Alcohol history"
                   value={history.history_of_alcohol_consumption}
@@ -2950,65 +2791,10 @@ export default function EntriesPatientEntryPage() {
                 </div>
               </div>
               <div className="entry-grid">
-                <SelectField
-                  label="Disease group"
-                  value={diagnosis.disease_group}
-                  options={getOptions("diagnosis-disease-groups")}
-                  onChange={(value) =>
-                    setDiagnosis({
-                      ...diagnosis,
-                      disease_group: value,
-                      disease_subgroup: "",
-                    })
-                  }
-                />
-                <SelectField
-                  label="Disease subgroup"
-                  value={diagnosis.disease_subgroup}
-                  options={subgroups}
-                  onChange={(value) =>
-                    setDiagnosis({ ...diagnosis, disease_subgroup: value })
-                  }
-                />
-                <SelectField
-                  label="Primary site"
-                  value={diagnosis.primary_site}
-                  options={getOptions("diagnosis-primary-sites")}
-                  onChange={(value) =>
-                    setDiagnosis({ ...diagnosis, primary_site: value })
-                  }
-                />
-                <SelectField
-                  label="Laterality"
-                  value={diagnosis.laterality}
-                  options={getOptions("diagnosis-lateralities")}
-                  onChange={(value) =>
-                    setDiagnosis({ ...diagnosis, laterality: value })
-                  }
-                />
+                <ClinicalSectionFields fields={observationFieldSchemas.diagnoses.fields} values={diagnosis} catalog={{ ...(optionsQuery.data ?? {}), "diagnosis-disease-subgroups": subgroups }} binding="manual" onChange={(field, value) => setDiagnosis((current) => ({ ...current, [field.manualKey ?? field.key]: value, ...(field.key === "disease_group" ? { disease_subgroup: "" } : {}) }))} />
               </div>
             </section>
             <section className="insight-grid insight-grid-dense">
-              <section className="panel entry-block">
-                <div className="panel-heading">
-                  <div>
-                    <p className="eyebrow">Diagnosis details</p>
-                    <h3>Clinical narrative</h3>
-                  </div>
-                </div>
-                <div className="entry-grid">
-                  <TextArea
-                    label="Diagnosis in details"
-                    value={diagnosis.diagnosis_in_details}
-                    onChange={(value) =>
-                      setDiagnosis({
-                        ...diagnosis,
-                        diagnosis_in_details: value,
-                      })
-                    }
-                  />
-                </div>
-              </section>
               <RepeatableSection
                 title="Past treatment history"
                 onAdd={() =>
@@ -3061,49 +2847,7 @@ export default function EntriesPatientEntryPage() {
                 </div>
               </div>
               <div className="entry-grid">
-                <TextField
-                  label="Biopsy date"
-                  type="date"
-                  value={diagnosis.biopsy_date}
-                  onChange={(value) =>
-                    setDiagnosis({ ...diagnosis, biopsy_date: value })
-                  }
-                />
-                <SelectField
-                  label="Histopathology type"
-                  value={diagnosis.histopathology_type}
-                  options={getOptions("histopathology-types")}
-                  onChange={(value) =>
-                    setDiagnosis({ ...diagnosis, histopathology_type: value })
-                  }
-                />
-                <SelectField
-                  label="Histopathology site"
-                  value={diagnosis.histopathology_site}
-                  options={getOptions("histopathology-sites")}
-                  onChange={(value) =>
-                    setDiagnosis({ ...diagnosis, histopathology_site: value })
-                  }
-                />
-                <SelectField
-                  label="Histopathology detail"
-                  value={diagnosis.histopathology_details}
-                  options={getOptions("histopathology-details")}
-                  onChange={(value) =>
-                    setDiagnosis({
-                      ...diagnosis,
-                      histopathology_details: value,
-                    })
-                  }
-                />
-                <RadioGroup
-                  label="Histopathology grade"
-                  value={diagnosis.histopathology_grade}
-                  options={getOptions("histopathology-grades")}
-                  onChange={(value) =>
-                    setDiagnosis({ ...diagnosis, histopathology_grade: value })
-                  }
-                />
+                <ClinicalSectionFields fields={observationFieldSchemas.histopathologies.fields} values={{ ...diagnosis, any_known_mutations: history.any_known_mutations }} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => field.key === "any_known_mutation" ? setHistory((current) => ({ ...current, any_known_mutations: String(value) })) : setDiagnosis((current) => ({ ...current, [field.manualKey ?? field.key]: value }))} />
               </div>
             </section>
             <section className="insight-grid insight-grid-dense entry-pathology-workflows">
@@ -3180,16 +2924,7 @@ export default function EntriesPatientEntryPage() {
                     </div>
                   </div>
                   <div className="entry-grid">
-                    <SelectField label="Panel version" value={test.panel_version} options={getOptions("molecular-panel-versions")} onChange={(value) => updateMolecularTest(testIndex, { panel_version: value, findings: [blankMolecularFinding()] })} />
-                    <SelectField label="Method" value={test.method} options={getOptions("molecular-methods")} onChange={(value) => updateMolecularTest(testIndex, { method: value })} />
-                    <SelectField label="Specimen" value={test.specimen} options={getOptions("molecular-specimens")} onChange={(value) => updateMolecularTest(testIndex, { specimen: value })} />
-                    <TextField label="Specimen collected on" type="date" value={test.specimen_collected_on} onChange={(value) => updateMolecularTest(testIndex, { specimen_collected_on: value })} />
-                    <TextField label="Tested on" type="date" value={test.tested_at} onChange={(value) => updateMolecularTest(testIndex, { tested_at: value })} />
-                    <TextField label="Reported on" type="date" value={test.reported_on} onChange={(value) => updateMolecularTest(testIndex, { reported_on: value })} />
-                    <StatusField label="QC status" value={test.qc_status} choices={molecularQcStatuses} onChange={(value) => updateMolecularTest(testIndex, { qc_status: value })} />
-                    <TextField label="Laboratory" value={test.laboratory} onChange={(value) => updateMolecularTest(testIndex, { laboratory: value })} />
-                    <TextField label="Accession number" value={test.accession_number} onChange={(value) => updateMolecularTest(testIndex, { accession_number: value })} />
-                    <TextArea label="Test notes" value={test.notes} onChange={(value) => updateMolecularTest(testIndex, { notes: value })} />
+                    <ClinicalSectionFields fields={observationFieldSchemas.molecular_tests.fields} group="record" values={test} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => updateMolecularTest(testIndex, { [field.manualKey ?? field.key]: value, ...(field.key === "panel_version" ? { findings: [blankMolecularFinding()] } : {}) })} />
                   </div>
                   <div className="molecular-findings-header">
                     <div>
@@ -3233,40 +2968,7 @@ export default function EntriesPatientEntryPage() {
             >
               {markers.map((row, index) => (
                 <div className="entry-grid repeatable-card" key={index}>
-                  <SelectField
-                    label="Marker"
-                    value={row.marker_name}
-                    options={getOptions("cancer-marker-names")}
-                    onChange={(value) =>
-                      updateRow(setMarkers, index, "marker_name", value)
-                    }
-                  />
-                  <TextField
-                    label="Unit"
-                    value={String(
-                      getOptions("cancer-marker-names").find(
-                        (option) => String(option.id) === row.marker_name,
-                      )?.unit ?? "",
-                    )}
-                    onChange={() => undefined}
-                    readOnly
-                  />
-                  <TextField
-                    label="Value"
-                    type="number"
-                    value={row.marker_value}
-                    onChange={(value) =>
-                      updateRow(setMarkers, index, "marker_value", value)
-                    }
-                  />
-                  <TextField
-                    label="Test date"
-                    type="date"
-                    value={row.tested_at}
-                    onChange={(value) =>
-                      updateRow(setMarkers, index, "tested_at", value)
-                    }
-                  />
+                  <ClinicalSectionFields fields={observationFieldSchemas.cancer_markers.fields} values={row} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => setMarkers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field.manualKey ?? field.key]: value } : item))} />
                   <RemoveButton
                     show={markers.length > 1}
                     onClick={() =>
@@ -3288,14 +2990,7 @@ export default function EntriesPatientEntryPage() {
             >
               {treatments.map((row, index) => (
                 <div className="entry-grid repeatable-card" key={index}>
-                  <InlineCheckboxGroup
-                    label="Treatment modalities"
-                    options={getOptions("treatment-modalities")}
-                    value={row.modalities}
-                    onChange={(modalities) =>
-                      updateRow(setTreatments, index, "modalities", modalities)
-                    }
-                  />
+                  <ClinicalSectionFields fields={observationFieldSchemas.treatments.fields} group="record" values={row} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => setTreatments((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field.manualKey ?? field.key]: value } : item))} />
                   <TextArea
                     label="Current treatment protocol"
                     value={row.current_treatment_protocol}
@@ -3308,38 +3003,6 @@ export default function EntriesPatientEntryPage() {
                       )
                     }
                   />
-                  <TextField
-                    label="Date of starting"
-                    type="date"
-                    value={row.started_at}
-                    onChange={(value) =>
-                      updateRow(setTreatments, index, "started_at", value)
-                    }
-                  />
-                  <TextField
-                    label="Date of ending"
-                    type="date"
-                    value={row.ended_at}
-                    onChange={(value) =>
-                      updateRow(setTreatments, index, "ended_at", value)
-                    }
-                  />
-                  <SelectField
-                    label="Line of treatment"
-                    value={row.line_of_treatment}
-                    options={getOptions("lines-of-treatment")}
-                    onChange={(value) =>
-                      updateRow(
-                        setTreatments,
-                        index,
-                        "line_of_treatment",
-                        value,
-                      )
-                    }
-                  />
-                  <StatusField label="Course status" value={row.status} choices={courseStatuses} onChange={(value) => updateRow(setTreatments, index, "status", value)} />
-                  <TextArea label="Reason for stopping" value={row.reason_for_stopping} onChange={(value) => updateRow(setTreatments, index, "reason_for_stopping", value)} />
-                  <TextArea label="Course notes" value={row.course_notes} onChange={(value) => updateRow(setTreatments, index, "course_notes", value)} />
                   <TextField
                     label="Cycle no."
                     type="number"
@@ -3562,14 +3225,7 @@ export default function EntriesPatientEntryPage() {
                   <section className="entry-span-full entry-response-assessments">
                     <div className="entry-response-assessments-head"><div><p className="eyebrow">Treatment administration</p><h4>Drug doses and cycle events</h4></div><button type="button" className="secondary-button" onClick={() => updateRow(setTreatments, index, "administrations", [...row.administrations, blankTreatmentAdministration()])}><Plus size={16} /> Add administration</button></div>
                     {row.administrations.map((administration, administrationIndex) => <div className="entry-grid repeatable-card" key={administrationIndex}>
-                      <SelectField label="Drug" value={administration.drug} options={getOptions("treatment-drugs")} onChange={(value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, drug: value } : item))} required />
-                      <TextField label="Administered on" type="date" value={administration.administered_on} onChange={(value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, administered_on: value } : item))} />
-                      <TextField label="Cycle number" type="number" value={administration.cycle_number} onChange={(value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, cycle_number: value } : item))} />
-                      <TextField label="Day number" type="number" value={administration.day_number} onChange={(value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, day_number: value } : item))} />
-                      <TextField label="Dose" type="number" value={administration.dose} onChange={(value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, dose: value } : item))} />
-                      <TextField label="Dose unit" value={administration.dose_unit} onChange={(value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, dose_unit: value } : item))} />
-                      <StatusField label="Administration status" value={administration.status} choices={[["planned", "Planned"], ["given", "Given"], ["delayed", "Delayed"], ["held", "Held"], ["cancelled", "Cancelled"]]} onChange={(value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, status: value } : item))} />
-                      <TextArea label="Administration notes" value={administration.notes} onChange={(value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, notes: value } : item))} />
+                      <ClinicalSectionFields fields={observationFieldSchemas.treatments.fields} group="administration" values={administration} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => updateRow(setTreatments, index, "administrations", row.administrations.map((item, itemIndex) => itemIndex === administrationIndex ? { ...item, [field.manualKey ?? field.key]: value } : item))} />
                       <RemoveButton show onClick={() => updateRow(setTreatments, index, "administrations", row.administrations.filter((_, itemIndex) => itemIndex !== administrationIndex))} />
                     </div>)}
                   </section>
@@ -3710,22 +3366,13 @@ export default function EntriesPatientEntryPage() {
             </RepeatableSection>
             <RepeatableSection title="Disease progression records" onAdd={() => setProgressionRecords([...progressionRecords, blankProgressionRecord()])}>
               {progressionRecords.map((record, index) => <div className="entry-grid repeatable-card" key={index}>
-                <SelectField label="Progression status" value={record.status} options={getOptions("disease-progression-statuses")} onChange={(value) => updateRow(setProgressionRecords, index, "status", value)} required />
-                <TextField label="Assessed on" type="date" value={record.assessed_on} onChange={(value) => updateRow(setProgressionRecords, index, "assessed_on", value)} required />
-                <TextField label="Progression date" type="date" value={record.progression_date} onChange={(value) => updateRow(setProgressionRecords, index, "progression_date", value)} />
-                <InlineCheckboxGroup label="Progression sites" options={getOptions("progression-sites")} value={record.progression_sites} onChange={(value) => updateRow(setProgressionRecords, index, "progression_sites", value)} />
-                <SelectField label="Estimation method" value={record.estimation_method} options={getOptions("response-estimation-methods")} onChange={(value) => updateRow(setProgressionRecords, index, "estimation_method", value)} />
-                <TextArea label="Progression notes" value={record.notes} onChange={(value) => updateRow(setProgressionRecords, index, "notes", value)} />
+                <ClinicalSectionFields fields={observationFieldSchemas.progression_records.fields} values={record} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => setProgressionRecords((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field.manualKey ?? field.key]: value } : item))} />
                 <RemoveButton show={progressionRecords.length > 1} onClick={() => setProgressionRecords(progressionRecords.filter((_, itemIndex) => itemIndex !== index))} />
               </div>)}
             </RepeatableSection>
             <RepeatableSection title="Survival follow-ups" onAdd={() => setSurvivalFollowUps([...survivalFollowUps, blankSurvivalFollowUp()])}>
               {survivalFollowUps.map((record, index) => <div className="entry-grid repeatable-card" key={index}>
-                <SelectField label="Survival status" value={record.status} options={getOptions("survival-statuses")} onChange={(value) => updateRow(setSurvivalFollowUps, index, "status", value)} required />
-                <TextField label="Followed up on" type="date" value={record.followed_up_on} onChange={(value) => updateRow(setSurvivalFollowUps, index, "followed_up_on", value)} required />
-                <TextField label="Death date" type="date" value={record.death_date} onChange={(value) => updateRow(setSurvivalFollowUps, index, "death_date", value)} />
-                <TextField label="Cause of death" value={record.cause_of_death} onChange={(value) => updateRow(setSurvivalFollowUps, index, "cause_of_death", value)} />
-                <TextArea label="Follow-up notes" value={record.notes} onChange={(value) => updateRow(setSurvivalFollowUps, index, "notes", value)} />
+                <ClinicalSectionFields fields={observationFieldSchemas.survival_records.fields} values={record} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => setSurvivalFollowUps((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field.manualKey ?? field.key]: value } : item))} />
                 <RemoveButton show={survivalFollowUps.length > 1} onClick={() => setSurvivalFollowUps(survivalFollowUps.filter((_, itemIndex) => itemIndex !== index))} />
               </div>)}
             </RepeatableSection>
@@ -3735,41 +3382,7 @@ export default function EntriesPatientEntryPage() {
             >
               {surgeries.map((row, index) => (
                 <div className="entry-grid repeatable-card" key={index}>
-                  <TextField
-                    label="Surgery date"
-                    type="date"
-                    value={row.surgery_date}
-                    onChange={(value) =>
-                      updateRow(setSurgeries, index, "surgery_date", value)
-                    }
-                  />
-                  <SelectField
-                    label="Surgery modality"
-                    value={row.surgery_modality}
-                    options={getOptions("surgery-modalities")}
-                    onChange={(value) =>
-                      updateRow(setSurgeries, index, "surgery_modality", value)
-                    }
-                  />
-                  <InlineCheckboxGroup
-                    label="Surgical laterality"
-                    options={getOptions("surgery-lateralities")}
-                    value={row.lateralities}
-                    fullWidth={false}
-                    onChange={(lateralities) =>
-                      updateRow(
-                        setSurgeries,
-                        index,
-                        "lateralities",
-                        lateralities,
-                      )
-                    }
-                  />
-                  <StatusField label="Surgery status" value={row.status} choices={surgeryStatuses} onChange={(value) => updateRow(setSurgeries, index, "status", value)} />
-                  <TextArea label="Procedure details" value={row.procedure_details} onChange={(value) => updateRow(setSurgeries, index, "procedure_details", value)} />
-                  <TextArea label="Operative findings" value={row.operative_findings} onChange={(value) => updateRow(setSurgeries, index, "operative_findings", value)} />
-                  <TextArea label="Complications" value={row.complications} onChange={(value) => updateRow(setSurgeries, index, "complications", value)} />
-                  <TextArea label="Surgery notes" value={row.notes} onChange={(value) => updateRow(setSurgeries, index, "notes", value)} />
+                  <ClinicalSectionFields fields={observationFieldSchemas.surgeries.fields} values={row} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => setSurgeries((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field.manualKey ?? field.key]: value } : item))} />
                   <section className="entry-response-assessments entry-span-full">
                     <div className="entry-response-assessments-head">
                       <div>
@@ -3797,11 +3410,6 @@ export default function EntriesPatientEntryPage() {
                         )
                       }
                     />
-                    <div className="entry-grid">
-                      <SelectField label="Response category" value={treatments[0]?.pathological_response.response_category ?? ""} options={getOptions("pathological-response-categories")} onChange={(value) => updateRow(setTreatments, 0, "pathological_response", { ...(treatments[0]?.pathological_response ?? blankResponse()), response_category: value })} />
-                      <TextField label="Residual viable tumour (%)" type="number" value={treatments[0]?.pathological_response.residual_viable_tumor_percentage ?? ""} onChange={(value) => updateRow(setTreatments, 0, "pathological_response", { ...(treatments[0]?.pathological_response ?? blankResponse()), residual_viable_tumor_percentage: value })} />
-                      <SelectField label="Tumour regression grade" value={treatments[0]?.pathological_response.tumor_regression_grade ?? ""} options={getOptions("tumor-regression-grades")} onChange={(value) => updateRow(setTreatments, 0, "pathological_response", { ...(treatments[0]?.pathological_response ?? blankResponse()), tumor_regression_grade: value })} />
-                    </div>
                   </section>
                   <RemoveButton
                     show={surgeries.length > 1}
@@ -3825,103 +3433,7 @@ export default function EntriesPatientEntryPage() {
             >
               {radiotherapySchedules.map((row, index) => (
                 <div className="entry-grid repeatable-card" key={index}>
-                  <InlineCheckboxGroup
-                    label="Radiotherapy site"
-                    options={getOptions("radiotherapy-sites")}
-                    value={row.sites}
-                    onChange={(sites) =>
-                      updateRow(setRadiotherapySchedules, index, "sites", sites)
-                    }
-                  />
-                  <TextField
-                    label="Radiotherapy start"
-                    type="date"
-                    value={row.started_at}
-                    onChange={(value) =>
-                      updateRow(
-                        setRadiotherapySchedules,
-                        index,
-                        "started_at",
-                        value,
-                      )
-                    }
-                  />
-                  <TextField
-                    label="Radiotherapy end"
-                    type="date"
-                    value={row.ended_at}
-                    onChange={(value) =>
-                      updateRow(
-                        setRadiotherapySchedules,
-                        index,
-                        "ended_at",
-                        value,
-                      )
-                    }
-                  />
-                  <SelectField
-                    label="Radiotherapy intent"
-                    value={row.radiotherapy_intent}
-                    options={getOptions("radiotherapy-intents")}
-                    onChange={(value) =>
-                      updateRow(
-                        setRadiotherapySchedules,
-                        index,
-                        "radiotherapy_intent",
-                        value,
-                      )
-                    }
-                  />
-                  <InlineCheckboxGroup
-                    label="Radiotherapy modality"
-                    options={getOptions("radiotherapy-modalities")}
-                    value={row.modalities}
-                    onChange={(modalities) =>
-                      updateRow(
-                        setRadiotherapySchedules,
-                        index,
-                        "modalities",
-                        modalities,
-                      )
-                    }
-                  />
-                  <TextField
-                    label="Fraction dose"
-                    value={row.fraction_dose}
-                    onChange={(value) =>
-                      updateRow(
-                        setRadiotherapySchedules,
-                        index,
-                        "fraction_dose",
-                        value,
-                      )
-                    }
-                  />
-                  <TextField
-                    label="Fraction count"
-                    value={row.fraction_count}
-                    onChange={(value) =>
-                      updateRow(
-                        setRadiotherapySchedules,
-                        index,
-                        "fraction_count",
-                        value,
-                      )
-                    }
-                  />
-                  <TextField
-                    label="Total dose in cGY"
-                    value={calculatedTotalDose(
-                      row.fraction_dose,
-                      row.fraction_count,
-                    )}
-                    onChange={() => undefined}
-                    readOnly
-                  />
-                  <TextField label="Completed fractions" type="number" value={row.completed_fractions} onChange={(value) => updateRow(setRadiotherapySchedules, index, "completed_fractions", value)} />
-                  <StatusField label="Radiotherapy status" value={row.status} choices={courseStatuses} onChange={(value) => updateRow(setRadiotherapySchedules, index, "status", value)} />
-                  <TextArea label="Reason for stopping" value={row.reason_for_stopping} onChange={(value) => updateRow(setRadiotherapySchedules, index, "reason_for_stopping", value)} />
-                  <TextArea label="Radiotherapy notes" value={row.notes} onChange={(value) => updateRow(setRadiotherapySchedules, index, "notes", value)} />
+                  <ClinicalSectionFields fields={observationFieldSchemas.radiotherapies.fields} values={row} catalog={optionsQuery.data ?? {}} binding="manual" onChange={(field, value) => setRadiotherapySchedules((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field.manualKey ?? field.key]: value } : item))} />
                   <RemoveButton
                     show={radiotherapySchedules.length > 1}
                     onClick={() =>

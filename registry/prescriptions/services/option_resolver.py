@@ -18,6 +18,7 @@ OPTION_FIELDS = {
         "disease_subgroup": "diagnosis-disease-subgroups",
         "primary_site": "diagnosis-primary-sites",
         "laterality": "diagnosis-lateralities",
+        "metastatic_sites": "diagnosis-metastatic-sites",
     },
     "histopathologies": {
         "histopathology_details": "histopathology-details",
@@ -71,9 +72,11 @@ OPTION_FIELDS = {
         "tumor_regression_grade": "tumor-regression-grades",
         "estimation_method": "response-estimation-methods",
     },
-    "progression_records": {"status": "disease-progression-statuses", "estimation_method": "response-estimation-methods"},
+    "progression_records": {"status": "disease-progression-statuses", "progression_sites": "progression-sites", "estimation_method": "response-estimation-methods"},
     "survival_records": {"status": "survival-statuses"},
 }
+
+MULTI_OPTION_FIELDS = {("diagnoses", "metastatic_sites"), ("progression_records", "progression_sites")}
 
 # These historical lookup models were deleted by existing options migrations.
 # A draft may retain their extracted text for review, but it cannot claim a
@@ -224,11 +227,25 @@ def validate_selected_resolutions(draft):
                         raise ValidationError({field: f"This field is not resolvable for {collection}."})
                     resource = resolution.get("resource")
                     option_id = resolution.get("option_id")
+                    option_ids = resolution.get("option_ids")
                     status = resolution.get("status")
                     if resource != expected_fields[field]:
                         raise ValidationError({field: "Resolution uses the wrong option resource."})
                     if status not in {"resolved", "ambiguous", "unresolved"}:
                         raise ValidationError({field: "Resolution has an invalid status."})
+                    is_multi = (collection, field) in MULTI_OPTION_FIELDS
+                    if is_multi:
+                        if option_id is not None:
+                            raise ValidationError({field: "A multi-select resolution uses option_ids, not option_id."})
+                        if not isinstance(option_ids, list) or any(not isinstance(item, int) or isinstance(item, bool) for item in option_ids):
+                            raise ValidationError({field: "A multi-select resolution requires an option_ids list."})
+                        if status != "resolved" and option_ids:
+                            raise ValidationError({field: "Only a resolved value may select option IDs."})
+                        if OPTION_RESOURCES[resource].objects.filter(pk__in=option_ids).count() != len(set(option_ids)):
+                            raise ValidationError({field: "A selected option does not exist in that resource."})
+                        continue
+                    if option_ids is not None:
+                        raise ValidationError({field: "A single-select resolution cannot use option_ids."})
                     if status != "resolved" and option_id is not None:
                         raise ValidationError({field: "Only a resolved value may select an option ID."})
                     if status == "resolved" and option_id is None:
@@ -343,7 +360,7 @@ def validate_approval_readiness(draft):
                         errors.append(f"{path}.{field} has no active controlled option and remains unresolved.")
                 for field in fields:
                     raw_value = values.get(field)
-                    if raw_value in (None, "") or isinstance(raw_value, (dict, list)):
+                    if raw_value in (None, "", []) or isinstance(raw_value, dict):
                         continue
                     resolution = resolutions.get(field)
                     if not resolution or resolution.get("status") != "resolved":

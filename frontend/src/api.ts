@@ -1721,8 +1721,8 @@ async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean
       ),
     );
   }
-  await Promise.all((payload.clinical_tnm_stagings ?? []).map((row) => post("/api/records/clinical-tnm-stagings/", { observation: observationId, t: row.t, n: row.n, m: row.m, stage: row.stage, staged_on: row.staged_at })));
-  await Promise.all((payload.pathological_tnm_stagings ?? []).map((row) => post("/api/records/pathological-tnm-stagings/", { observation: observationId, t: row.t, n: row.n, m: row.m, stage: row.stage, staged_on: row.staged_at })));
+  await Promise.all((payload.clinical_tnm_stagings ?? []).map((row) => post("/api/records/clinical-tnm-stagings/", { observation: observationId, t: row.t, n: row.n, m: row.m, stage: row.stage, staged_on: row.staged_on ?? row.staged_at })));
+  await Promise.all((payload.pathological_tnm_stagings ?? []).map((row) => post("/api/records/pathological-tnm-stagings/", { observation: observationId, t: row.t, n: row.n, m: row.m, stage: row.stage, staged_on: row.staged_on ?? row.staged_at })));
   await Promise.all((payload.cancer_markers ?? []).map((row) => post("/api/records/cancer-marker-results/", { observation: observationId, marker: row.marker_name, value: row.marker_value, tested_on: row.tested_at })));
   for (const row of payload.molecular_tests ?? []) {
     const test = await post("/api/records/molecular-tests/", {
@@ -1748,9 +1748,9 @@ async function saveNormalizedEntry(payload: EntriesIntakePayload, draft: boolean
     if (modality && protocol) {
       const course = await post("/api/records/treatment-courses/", { observation: observationId, modality, protocol, line_of_treatment: row.line_of_treatment, started_on: row.started_at, ended_on: row.ended_at, status: row.status, reason_for_stopping: row.reason_for_stopping, notes: row.course_notes || row.chemotherapy_details });
       await Promise.all(((row.administrations as RawRecord[] | undefined) ?? []).map((administration) => post("/api/records/treatment-administrations/", { treatment_course: course.id, observation: observationId, ...administration })));
-      await Promise.all(((row.recist11_assessments as RawRecord[] | undefined) ?? []).map((assessment) => post("/api/records/recist11-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: "on_treatment", target_lesion: assessment.target_lesion, non_target_lesion: assessment.non_target_lesion, new_lesion: assessment.new_lesion, overall_response: assessment.response_result, estimation_method: assessment.estimation_method })));
-      await Promise.all(((row.irecist_assessments as RawRecord[] | undefined) ?? []).map((assessment) => post("/api/records/irecist-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: "on_treatment", target_lesion: assessment.target_lesion, non_target_lesion: assessment.non_target_lesion, new_lesion: assessment.new_lesion, overall_response: assessment.response_result, estimation_method: assessment.estimation_method })));
-      await Promise.all(((row.pathological_response_records as RawRecord[] | undefined) ?? []).filter((assessment) => Boolean(assessment.assessed_at)).map((assessment) => post("/api/records/pathological-response-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: "post_treatment", response_category: assessment.response_category, residual_viable_tumor_percentage: assessment.residual_viable_tumor_percentage, tumor_regression_grade: assessment.tumor_regression_grade, estimation_method: assessment.estimation_method })));
+      await Promise.all(((row.recist11_assessments as RawRecord[] | undefined) ?? []).map((assessment) => post("/api/records/recist11-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: assessment.timepoint || "on_treatment", target_lesion: assessment.target_lesion, non_target_lesion: assessment.non_target_lesion, new_lesion: assessment.new_lesion, overall_response: assessment.response_result, estimation_method: assessment.estimation_method, notes: assessment.notes })));
+      await Promise.all(((row.irecist_assessments as RawRecord[] | undefined) ?? []).map((assessment) => post("/api/records/irecist-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: assessment.timepoint || "on_treatment", target_lesion: assessment.target_lesion, non_target_lesion: assessment.non_target_lesion, new_lesion: assessment.new_lesion, overall_response: assessment.response_result, estimation_method: assessment.estimation_method, notes: assessment.notes })));
+      await Promise.all(((row.pathological_response_records as RawRecord[] | undefined) ?? []).filter((assessment) => Boolean(assessment.assessed_at)).map((assessment) => post("/api/records/pathological-response-assessments/", { observation: observationId, treatment_course: course.id, assessed_on: assessment.assessed_at, timepoint: assessment.timepoint || "post_treatment", response_category: assessment.response_category, residual_viable_tumor_percentage: assessment.residual_viable_tumor_percentage, tumor_regression_grade: assessment.tumor_regression_grade, estimation_method: assessment.estimation_method, notes: assessment.notes })));
     }
   }
   await Promise.all((payload.progression_records ?? []).map((record) => post("/api/records/disease-progression-records/", { observation: observationId, ...record })));
@@ -1880,6 +1880,7 @@ export interface PrescriptionDraftRecord {
     resource: string;
     raw_value: unknown;
     option_id: number | null;
+    option_ids?: number[];
     match_method: string | null;
     candidates: Array<{ option_id: number; label: string; match_method: string; score: number }>;
     reason: string;
