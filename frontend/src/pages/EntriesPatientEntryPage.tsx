@@ -37,8 +37,7 @@ import {
   lookupEntriesPatient,
   saveEntriesDraft,
 } from "../api";
-import { PatientFormSections } from "../components/intake/PatientFormSections";
-import { ObservationFormSections } from "../components/intake/ObservationFormSections";
+import { IntakeSelectField, IntakeTextArea, IntakeTextField } from "../components/intake/SharedIntakeFields";
 
 type MolecularFindingRow = {
   panel_target: string;
@@ -640,28 +639,7 @@ function SelectField({
   onChange: (value: string) => void;
   required?: boolean;
 }) {
-  return (
-    <label className="filter-field">
-      <span>
-        {label}
-        {required ? " *" : ""}
-      </span>
-      <select
-        className="filter-select"
-        value={value}
-        required={required}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">Select…</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {optionLabel(option)}
-          </option>
-        ))}
-      </select>
-      <p className="entry-field-help">{fieldHelper(label, undefined, true)}</p>
-    </label>
-  );
+  return <IntakeSelectField label={label} value={value} options={options} required={required} onChange={onChange} optionLabel={optionLabel} help={fieldHelper(label, undefined, true)} />;
 }
 
 function StatusField({ label, value, onChange, choices }: { label: string; value: string; onChange: (value: string) => void; choices: Array<[string, string]> }) {
@@ -696,27 +674,7 @@ function TextField({
     ].includes(label)
   )
     return null;
-  return (
-    <label className="filter-field">
-      <span>
-        {label}
-        {required ? " *" : ""}
-      </span>
-      {type === "date" ? (
-        <DateInput value={value} onChange={onChange} readOnly={readOnly} />
-      ) : (
-        <input
-          className="auth-input"
-          type={type}
-          required={required}
-          readOnly={readOnly}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      )}
-      <p className="entry-field-help">{fieldHelper(label, type)}</p>
-    </label>
-  );
+  return <IntakeTextField label={label} value={value} onChange={onChange} type={type} required={required} readOnly={readOnly} help={fieldHelper(label, type)} control={type === "date" ? <DateInput value={value} onChange={onChange} readOnly={readOnly} /> : undefined} />;
 }
 
 function TextArea({
@@ -732,19 +690,7 @@ function TextArea({
   fullWidth?: boolean;
   className?: string;
 }) {
-  return (
-    <label
-      className={`${fullWidth ? "filter-field entry-span-full" : "filter-field"} ${className}`.trim()}
-    >
-      <span>{label}</span>
-      <textarea
-        className="auth-input entry-textarea"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      <p className="entry-field-help">{fieldHelper(label)}</p>
-    </label>
-  );
+  return <IntakeTextArea label={label} value={value} onChange={onChange} fullWidth={fullWidth} className={className} help={fieldHelper(label)} />;
 }
 
 function CheckboxGroup({
@@ -2340,7 +2286,7 @@ export default function EntriesPatientEntryPage() {
           <PublishedObservationHistory source={clinicalDetailQuery.data} />
         ) : null}
         {activeStep === 0 ? (
-          <PatientFormSections><ObservationFormSections><section className="panel entry-block">
+          <section className="panel entry-block">
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Patient identification</p>
@@ -2413,7 +2359,7 @@ export default function EntriesPatientEntryPage() {
                 the registry.
               </p>
             ) : null}
-          </section></ObservationFormSections></PatientFormSections>
+          </section>
         ) : null}
         {activeStep === 0 ? (
           <>
