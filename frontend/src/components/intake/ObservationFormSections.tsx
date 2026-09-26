@@ -63,7 +63,13 @@ export function ObservationFormSections({ observation, catalog = {}, disabled, s
                 : option
                 ? { status: "resolved", resource: field.resource, raw_value: option.name ?? option.display, option_id: option.id, match_method: "reviewer_selected", candidates: [], reason: "" }
                 : { status: "unresolved", resource: field.resource, raw_value: value, option_id: null, match_method: null, candidates: [], reason: "Selection required." };
-              return { ...current, state: "edited", values: { ...current.values, [field.key]: field.resource && !field.multiple && option ? option.name ?? option.display : value }, resolutions };
+              // Canonical draft values carry validated option IDs.  Display text
+              // stays in the resolution/evidence layer and is never mistaken for
+              // a persisted clinical value.
+              const canonicalValue = field.resource
+                ? field.multiple ? options.map((item) => item.id) : option ? option.id : value
+                : value;
+              return { ...current, state: "edited", values: { ...current.values, [field.key]: canonicalValue }, resolutions };
             });
           }} />
           <div className="intake-record-actions"><button type="button" className="secondary-button" disabled={disabled || !recordReady(collection, record)} onClick={() => updateRecord(collection, record.temp_id, (current) => ({ ...current, state: "validated" }))}><CheckCircle2 size={15} />Mark validated</button>{moveTargets.length ? <select className="filter-select" disabled={disabled} value="" aria-label="Move record" onChange={(event) => { if (event.target.value) onMoveRecord?.(collection, record.temp_id, event.target.value); }}><option value="">Move to observation…</option>{moveTargets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}</select> : null}<button type="button" className="text-button danger-button" disabled={disabled} onClick={() => removeRecord(collection, record.temp_id)}><Trash2 size={15} />Remove</button></div>

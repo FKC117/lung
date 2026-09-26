@@ -34,6 +34,7 @@ OPTION_FIELDS = {
         "method": "molecular-methods",
         "specimen": "molecular-specimens",
         "gene": "molecular-genes",
+        "partner_gene": "molecular-genes",
         "exon": "molecular-exons",
         "alteration_type": "molecular-alteration-types",
         "reported_result": "molecular-results",
@@ -241,8 +242,13 @@ def validate_selected_resolutions(draft):
                             raise ValidationError({field: "A multi-select resolution requires an option_ids list."})
                         if status != "resolved" and option_ids:
                             raise ValidationError({field: "Only a resolved value may select option IDs."})
-                        if OPTION_RESOURCES[resource].objects.filter(pk__in=option_ids).count() != len(set(option_ids)):
+                        if len(option_ids) != len(set(option_ids)):
+                            raise ValidationError({field: "A multi-select resolution cannot contain duplicate option IDs."})
+                        if OPTION_RESOURCES[resource].objects.filter(pk__in=option_ids).count() != len(option_ids):
                             raise ValidationError({field: "A selected option does not exist in that resource."})
+                        value_ids = record.get("values", {}).get(field, [])
+                        if status == "resolved" and (not isinstance(value_ids, list) or any(not isinstance(item, int) or isinstance(item, bool) for item in value_ids) or sorted(value_ids) != sorted(option_ids)):
+                            raise ValidationError({field: "Validated multi-select values must match their resolved option IDs."})
                         continue
                     if option_ids is not None:
                         raise ValidationError({field: "A single-select resolution cannot use option_ids."})

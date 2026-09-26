@@ -12,6 +12,7 @@ from .services.batch import create_batch_job, sync_batch_job
 from .services.access import prescription_batch_jobs_for_user, prescription_documents_for_user
 from .services.draft_schema import is_canonical_draft
 from .services.intake_draft import build_intake_draft
+from .services.publish import publish_review
 from .tasks import process_prescription_document, sync_prescription_batch_job
 
 
@@ -187,6 +188,18 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
         PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="approved")
         return Response(PrescriptionReviewSerializer(review).data)
+
+    @action(detail=True, methods=["post"], url_path="publish")
+    def publish(self, request, pk=None):
+        """Publish a previously approved canonical draft, atomically and idempotently."""
+        review = self._existing_review(self.get_object())
+        observations, counts = publish_review(review, request.user)
+        review.refresh_from_db()
+        return Response({
+            "review": PrescriptionReviewSerializer(review, context={"request": request}).data,
+            "observation_ids": [item.pk for item in observations],
+            "counts": counts,
+        })
 
     @action(detail=True, methods=["get"], url_path="entry-draft")
     def entry_draft(self, request, pk=None):

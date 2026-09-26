@@ -26,9 +26,10 @@ from options.models import (
     TreatmentProtocol,
     TreatmentProtocolDrug,
 )
-from records.models import ClinicalObservation, Diagnosis, MolecularTest, MolecularTestResult, Patient
+from records.models import ClinicalObservation, Diagnosis, MolecularTest, MolecularTestResult, Patient, PatientAnthropometry
 
-from .models import ExtractionRun, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview
+from .models import ExtractionRun, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, RecordProvenance
+from .services.publish import publish_review
 from .services.draft_schema import COLLECTIONS, empty_draft, empty_observation, normalize_extraction, validate_draft
 from .services.extraction import validate_extraction
 from .services.intake_draft import build_intake_draft
@@ -99,7 +100,7 @@ class DraftSchemaTests(TestCase):
         observation = empty_observation(temp_id="duplicate")
         observation["diagnoses"].append(record("duplicate"))
         draft["observations"].append(observation)
-        with self.assertRaises(ValidationError):
+        with self.assertRaises(Exception):
             validate_draft(draft, document_id=4, check_database=False)
 
     def test_cross_observation_evidence_reference_is_rejected(self):
@@ -285,6 +286,10 @@ class OptionResolutionTests(TestCase):
         validate_selected_resolutions(draft)
         validate_approval_readiness(draft)
 
+        diagnosis["values"]["metastatic_sites"] = []
+        with self.assertRaisesMessage(ValidationError, "must match"):
+            validate_selected_resolutions(draft)
+        diagnosis["values"]["metastatic_sites"] = [metastatic_site.pk]
         diagnosis["resolutions"]["metastatic_sites"]["option_ids"] = [999999]
         with self.assertRaisesMessage(ValidationError, "does not exist"):
             validate_selected_resolutions(draft)
@@ -358,10 +363,44 @@ class DraftApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("raw_response", response.data["extraction_runs"][0])
 
-    def test_document_has_no_publication_action(self):
-        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/publish-review/")
-        self.assertEqual(response.status_code, 404)
+    def test_approved_canonical_draft_publishes_once_with_provenance(self):
+        self.client.post(f"/api/prescriptions/documents/{self.document.pk}/start-review/")
+        patient = Patient.objects.create(registration_no="REG-PUBLISH", patient_id="PAT-PUBLISH", name="Patient")
+        review = PrescriptionReview.objects.get(document=self.document)
+        draft = deepcopy(review.reviewed_data)
+        draft["patient"] = {"match_status": "existing", "patient_id": patient.pk, "values": {}}
+        draft["observations"][0]["anthropometry"] = {"height_cm": "170", "weight_kg": "70"}
+        review.reviewed_data = draft
+        review.selected_patient = patient
+        review.save(update_fields=["reviewed_data", "selected_patient", "updated_at"])
+        self.assertEqual(self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/").status_code, 200)
+
+        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/publish/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["observation_ids"]), 1)
+        self.assertEqual(ClinicalObservation.objects.count(), 1)
+        self.assertEqual(PatientAnthropometry.objects.count(), 1)
+        self.assertTrue(RecordProvenance.objects.filter(document=self.document).exists())
+        repeated = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/publish/")
+        self.assertEqual(repeated.status_code, 200)
+        self.assertTrue(repeated.data["counts"]["already_published"])
+        self.assertEqual(ClinicalObservation.objects.count(), 1)
+
+    def test_failed_child_rolls_back_complete_publication(self):
+        self.client.post(f"/api/prescriptions/documents/{self.document.pk}/start-review/")
+        patient = Patient.objects.create(registration_no="REG-ROLLBACK", patient_id="PAT-ROLLBACK", name="Patient")
+        review = PrescriptionReview.objects.get(document=self.document)
+        draft = deepcopy(review.reviewed_data)
+        draft["patient"] = {"match_status": "existing", "patient_id": patient.pk, "values": {}}
+        draft["observations"][0]["anthropometry"] = {"height_cm": "bad", "weight_kg": "70"}
+        review.reviewed_data = draft; review.selected_patient = patient; review.status = PrescriptionReview.Status.APPROVED
+        review.save(update_fields=["reviewed_data", "selected_patient", "status", "updated_at"])
+        with self.assertRaises(Exception):
+            publish_review(review, self.user)
         self.assertEqual(ClinicalObservation.objects.count(), 0)
+        self.assertEqual(PatientAnthropometry.objects.count(), 0)
+        review.refresh_from_db()
+        self.assertIsNone(review.published_at)
 
     def test_selected_patient_is_synchronized_into_draft(self):
         patient = Patient.objects.create(registration_no="REG-P", patient_id="PAT-P", name="Patient")

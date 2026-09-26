@@ -770,30 +770,6 @@ function MultiSelectField({
   );
 }
 
-function InlineCheckboxGroup({
-  label,
-  options,
-  value,
-  onChange,
-  fullWidth = true,
-}: {
-  label: string;
-  options: EntryOption[];
-  value: string[];
-  onChange: (value: string[]) => void;
-  fullWidth?: boolean;
-}) {
-  return (
-    <MultiSelectField
-      label={label}
-      options={options}
-      value={value}
-      onChange={onChange}
-      fullWidth={fullWidth}
-    />
-  );
-}
-
 function ResponseAssessmentCard({
   title,
   showTitle = true,
@@ -1666,7 +1642,7 @@ export default function EntriesPatientEntryPage() {
         .filter((row) => row.t || row.n || row.m || row.stage || row.staged_at)
         .map((row) => compact({ t: toNumber(row.t), n: toNumber(row.n), m: toNumber(row.m), stage: toNumber(row.stage), staged_on: row.staged_at }));
     const molecularTests = molecular
-      .filter((test) => test.panel_version || test.method || test.findings.some((finding) => finding.gene))
+      .filter((test) => test.panel_version || test.method || test.specimen || test.specimen_collected_on || test.tested_at || test.reported_on || test.laboratory || test.accession_number || test.notes || test.findings.some((finding) => finding.gene || finding.panel_target))
       .map((test) => compact({
         panel_version: toNumber(test.panel_version), method: toNumber(test.method), specimen: toNumber(test.specimen),
         specimen_collected_on: test.specimen_collected_on || undefined, tested_on: test.tested_at || undefined,
@@ -1798,7 +1774,7 @@ export default function EntriesPatientEntryPage() {
         ),
       comorbidities: ids(comorbidities).map((comorbidity) => ({ comorbidity })),
       diagnoses:
-        diagnosis.disease_group || diagnosis.primary_site
+        diagnosis.diagnosed_on || diagnosis.disease_group || diagnosis.disease_subgroup || diagnosis.primary_site || diagnosis.laterality || diagnosis.metastatic_sites.length || diagnosis.diagnosis_in_details
           ? [
               compact({
                 diagnosed_on: diagnosis.diagnosed_on,
@@ -1812,7 +1788,7 @@ export default function EntriesPatientEntryPage() {
             ]
           : [],
       histopathologies:
-        diagnosis.histopathology_details || diagnosis.histopathology_type
+        diagnosis.biopsy_date || diagnosis.report_date || diagnosis.histopathology_details || diagnosis.histopathology_type || diagnosis.histopathology_site || diagnosis.histopathology_grade || diagnosis.report_summary
           ? [
               compact({
                 biopsy_date: diagnosis.biopsy_date,
