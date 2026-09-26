@@ -4305,6 +4305,7 @@
 .longitudinal-pane-title > div { display: grid; gap: .12rem; }
 .longitudinal-pane-title small { color: var(--text-muted); }
 .longitudinal-pdf { width: 100%; min-height: 25rem; border: 0; border-radius: 12px; background: #fff; }
+.longitudinal-document-image { width: 100%; max-height: 34rem; object-fit: contain; border-radius: 12px; background: #fff; }
 .longitudinal-evidence-list,
 .longitudinal-observation-list,
 .longitudinal-timeline-actions { display: grid; gap: .65rem; }

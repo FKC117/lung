@@ -31,7 +31,7 @@ export function LongitudinalDraftWorkspace({ document, draft, catalog, disabled,
 
   const setDraft = (next: LongitudinalIntakeDraft, nextSelected = selectedId) => { onChange(next); setSelectedId(nextSelected); setSelectedRecords(new Set()); };
   const add = () => { const observation = emptyObservation(); setDraft({ ...draft, observations: [...draft.observations, observation] }, observation.temp_id); };
-  const remove = () => { const next = deleteObservation(draft, selected.temp_id); setDraft(next, next.observations[Math.min(selectedIndex, next.observations.length - 1)].temp_id); };
+  const remove = () => { if (!window.confirm("Delete this observation draft and all records currently assigned to it?")) return; const next = deleteObservation(draft, selected.temp_id); setDraft(next, next.observations[Math.min(selectedIndex, next.observations.length - 1)].temp_id); };
   const split = () => { const refs: RecordRef[] = [...selectedRecords].map((key) => { const [collection, tempId] = key.split(":"); return { collection: collection as ObservationCollection, tempId }; }); const next = splitObservation(draft, selected.temp_id, refs); setDraft(next, next.observations.at(-1)?.temp_id ?? selected.temp_id); };
   const merge = () => { if (!mergeTarget) return; const next = mergeObservations(draft, selected.temp_id, mergeTarget); setDraft(next, mergeTarget); setMergeTarget(""); };
   const updateObservation = (observation: typeof selected) => onChange({ ...draft, observations: draft.observations.map((item) => item.temp_id === observation.temp_id ? observation : item) });
@@ -42,7 +42,7 @@ export function LongitudinalDraftWorkspace({ document, draft, catalog, disabled,
     <div className="longitudinal-workspace-columns">
       <aside className="longitudinal-source-pane">
         <div className="longitudinal-pane-title"><FileText size={17} /><div><strong>Prescription and evidence</strong><small>Source material remains read-only</small></div></div>
-        {document.file.toLowerCase().includes("source-file") && document.original_filename.toLowerCase().endsWith(".pdf") ? <iframe className="longitudinal-pdf" title={`Prescription ${document.original_filename}`} src={document.file} /> : null}
+        {document.original_filename.toLowerCase().endsWith(".pdf") ? <iframe className="longitudinal-pdf" title={`Prescription ${document.original_filename}`} src={document.file} /> : <img className="longitudinal-document-image" src={document.file} alt={`Prescription ${document.original_filename}`} />}
         <a className="secondary-button" href={document.file} target="_blank" rel="noreferrer">Open original</a>
         <div className="longitudinal-evidence-list">{evidence.length ? evidence.map((item) => <article key={item.evidence_id} className="longitudinal-evidence-card"><div><span>Page {item.page ?? "—"}</span>{item.confidence != null ? <span>{Math.round(item.confidence * 100)}%</span> : null}</div><strong>{item.field_path}</strong><p>{item.source_text || "No source excerpt recorded."}</p></article>) : <p className="hero-text">This observation has no linked evidence.</p>}</div>
       </aside>

@@ -23,6 +23,17 @@ const optionFields: Record<string, string> = {
   site: "radiotherapy-sites", intent: "radiotherapy-intents", response_category: "pathological-response-categories",
   tumor_regression_grade: "tumor-regression-grades", estimation_method: "response-estimation-methods",
 };
+const collectionOptionFields: Partial<Record<ObservationCollection, Record<string, string>>> = {
+  surgeries: { modality: "surgery-modalities", laterality: "surgery-lateralities" },
+  radiotherapies: { modality: "radiotherapy-modalities", site: "radiotherapy-sites", intent: "radiotherapy-intents" },
+  ihc_results: { result: "ihc-cycle-results", reported_result: "ihc-cycle-results" },
+  pathological_staging_results: { result: "ihc-staging-cycle-results" },
+  molecular_tests: { result: "molecular-results", reported_result: "molecular-results" },
+  recist_assessments: { target_lesion: "recist-target-lesions", non_target_lesion: "recist-non-target-lesions", new_lesion: "recist-new-lesions", overall_response: "recist-response-results" },
+  irecist_assessments: { target_lesion: "irecist-target-lesions", non_target_lesion: "irecist-non-target-lesions", new_lesion: "irecist-new-lesions", overall_response: "irecist-response-results" },
+  progression_records: { status: "disease-progression-statuses" },
+  survival_records: { status: "survival-statuses" },
+};
 
 export interface ObservationFormSectionsProps {
   observation?: PrescriptionObservationDraft;
@@ -52,7 +63,7 @@ export function ObservationFormSections({ observation, catalog = {}, disabled, s
       <label className="filter-field"><span>Temporal context</span><select className="filter-select" disabled={disabled} value={observation.temporal_context} onChange={(event) => onChange({ ...observation, temporal_context: event.target.value as PrescriptionObservationDraft["temporal_context"] })}><option value="current">Current</option><option value="historical">Historical</option><option value="planned">Planned</option><option value="unknown">Unknown</option></select></label>
     </div></section>
     {observationCollections.map((collection) => observation[collection].length ? <section className="panel entry-block intake-record-section" key={collection}><div className="panel-heading"><div><p className="eyebrow">New Entry section</p><h3>{labels[collection]}</h3></div><button type="button" className="secondary-button" disabled={disabled} onClick={() => addRecord(collection)}><Plus size={15} />Add record</button></div>{observation[collection].map((record, index) => <article className={`intake-record-card intake-record-${record.state}`} key={record.temp_id}><div className="intake-record-heading"><label><input type="checkbox" checked={selectedRecords.has(`${collection}:${record.temp_id}`)} onChange={() => onToggleRecord?.(collection, record.temp_id)} /><strong>{labels[collection]} {index + 1}</strong></label><span className={`intake-state intake-state-${record.state}`}>{record.state}</span></div><div className="entry-grid">{Object.entries(record.values).map(([field, raw]) => {
-        const resource = optionFields[field];
+        const resource = collectionOptionFields[collection]?.[field] ?? optionFields[field];
         let options = catalog[resource] ?? [];
         if (field === "disease_subgroup") { const group = record.resolutions.disease_group?.option_id; if (group) options = options.filter((option) => Number(option.disease_group) === group); }
         if (field === "exon") { const gene = record.resolutions.gene?.option_id; if (gene) options = options.filter((option) => Number(option.gene) === gene); }
