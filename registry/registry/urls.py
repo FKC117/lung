@@ -20,6 +20,8 @@ from django.conf.urls.static import static
 from django.http import HttpResponseNotFound
 from django.urls import path, include
 
+from .telemetry_views import client_error
+
 
 def private_prescription_media(request, path):
     """Prevent direct media serving; authorized access uses API file actions."""
@@ -30,6 +32,7 @@ media_prefix = settings.MEDIA_URL.lstrip("/")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api/telemetry/client-errors/", client_error, name="client-error-telemetry"),
     path("api/", include("options.urls")),
     path("api/", include("records.urls")),
     path("api/", include("prescriptions.urls")),

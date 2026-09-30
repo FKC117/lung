@@ -29,7 +29,13 @@ NAMED_DATE = re.compile(
     re.IGNORECASE,
 )
 IDENTIFIER = re.compile(
-    r"\b(?P<label>h\.?\s*n\.?|registration|reg(?:istration)?\s*(?:no|number)?|patient\s*(?:id|no|number)?|mrn|uhid)(?:\s*(?:no|number))?\s*[:#-]?\s*(?P<value>[A-Z0-9][A-Z0-9/-]{2,})\b",
+    r"\b(?P<label>h\.?\s*/?\s*n\.?(?:\s*(?:id|no|number))?|hospital\s*(?:id|no|number)|registration|reg(?:istration)?\s*(?:id|no|number)?|patient\s*(?:id|no|number)?|mrn|uhid)(?:\s*(?:id|no|number))?\s*[:#-]?\s*(?P<value>[A-Z0-9][A-Z0-9/-]{2,})\b",
+    re.IGNORECASE,
+)
+# A doctor's BMDC registration is commonly printed beside the patient header.
+# It can contain the same "Reg No" wording but is never a patient identifier.
+CLINICIAN_REGISTRATION_PREFIX = re.compile(
+    r"\b(?:bmdc|bangladesh\s+medical(?:\s*(?:and|&)\s*dental)?\s*council|medical\s+council)\s*$",
     re.IGNORECASE,
 )
 PHONE = re.compile(r"(?<!\d)(?P<value>(?:\+?880[ -]?|0)1\d(?:[ -]?\d){8})(?!\d)")
@@ -122,11 +128,16 @@ def find_explicit_entities(pages):
     for page in pages:
         text = page.cleaned_text or page.raw_text
         for match in IDENTIFIER.finditer(text):
+            # Reject `BMDC Reg No: A43908` while retaining `HN ID: R...`.
+            prefix = text[max(0, match.start() - 90):match.start()]
+            if CLINICIAN_REGISTRATION_PREFIX.search(prefix):
+                continue
             item = evidence(page.page_number, text, match.start("value"), match.end("value"), match.group("value"), 0.98)
-            label = match.group("label").lower().replace(".", "").replace(" ", "")
-            item["identifier_type"] = "hn" if label == "hn" else ("registration_no" if label.startswith("reg") else label)
+            label = match.group("label").lower().replace(".", "").replace(" ", "").replace("/", "")
+            item["identifier_type"] = "hn" if label.startswith("hn") or label.startswith("hospital") else ("registration_no" if label.startswith("reg") else label)
             if item["identifier_type"] in {"hn", "registration_no"}:
                 item["patient_field"] = "registration_no"
+                item["confidence"] = 0.99 if item["identifier_type"] == "hn" else 0.98
             identifiers.append(item)
         for match in PHONE.finditer(text):
             phones.append(evidence(page.page_number, text, match.start("value"), match.end("value"), match.group("value"), 0.96))

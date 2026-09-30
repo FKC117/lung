@@ -150,17 +150,19 @@ def _record_from_candidate(candidate, collection, index, observation):
     }
 
 
-def _patient_values(source):
+def _patient_values(source, *, allow_identifier_fields=True):
     patient = source.get("patient") if isinstance(source.get("patient"), dict) else {}
     values = {}
     for key, value in patient.items():
         if key in {"identifiers", "phones", "match_candidates"}:
             continue
+        if not allow_identifier_fields and key in {"registration_no", "patient_id"}:
+            continue
         if isinstance(value, dict) and "value" in value:
             values[key] = value.get("value")
         elif not isinstance(value, (dict, list)):
             values[key] = value
-    identifiers = patient.get("identifiers") if isinstance(patient.get("identifiers"), list) else []
+    identifiers = patient.get("identifiers") if allow_identifier_fields and isinstance(patient.get("identifiers"), list) else []
     for item in identifiers:
         if not isinstance(item, dict):
             continue
@@ -237,7 +239,15 @@ def normalize_extraction(source, *, document_id, linked_patient_id=None):
     draft = empty_draft(document_id, patient_id=linked_patient_id)
     gemini = source.get("gemini_extraction") if isinstance(source.get("gemini_extraction"), dict) else {}
     patient_source = gemini if gemini.get("patient") else source
-    draft["patient"]["values"] = _patient_values(patient_source)
+    # LLM output may help with patient name/age, but it is not trusted for
+    # identifiers. HN/registration values come only from deterministic,
+    # label-aware parsing so a clinician's BMDC number cannot become a patient
+    # registration number.
+    draft["patient"]["values"] = _patient_values(patient_source, allow_identifier_fields=False)
+    deterministic_patient_values = _patient_values(source)
+    for field in ("registration_no", "patient_id"):
+        if deterministic_patient_values.get(field):
+            draft["patient"]["values"][field] = deterministic_patient_values[field]
 
     candidates = source.get("patient", {}).get("match_candidates", []) if isinstance(source.get("patient"), dict) else []
     if not linked_patient_id and candidates:

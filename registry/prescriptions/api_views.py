@@ -87,8 +87,8 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def process(self, request, pk=None):
         document = self.get_object()
-        if document.status != PrescriptionDocument.Status.UPLOADED:
-            return Response({"detail": "Only a newly uploaded document can be processed."}, status=status.HTTP_409_CONFLICT)
+        if document.status not in {PrescriptionDocument.Status.UPLOADED, PrescriptionDocument.Status.FAILED}:
+            return Response({"detail": "Only an uploaded or failed document can be queued for extraction."}, status=status.HTTP_409_CONFLICT)
         document.status = PrescriptionDocument.Status.PROCESSING
         document.processing_started_at = timezone.now()
         document.save(update_fields=["status", "processing_started_at"])
@@ -96,6 +96,26 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
             task = process_prescription_document.delay(document.pk)
         except Exception as exc:
             document.status = PrescriptionDocument.Status.UPLOADED
+            document.processing_started_at = None
+            document.save(update_fields=["status", "processing_started_at"])
+            raise ValidationError({"detail": f"Unable to queue extraction: {exc}"}) from exc
+        return Response({**self.get_serializer(document).data, "task_id": task.id}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["post"], url_path="reprocess")
+    def reprocess(self, request, pk=None):
+        """Re-run an unreviewed completed document with the current extractor rules."""
+        document = self.get_object()
+        if document.status != PrescriptionDocument.Status.READY_FOR_REVIEW:
+            raise ValidationError({"detail": "Only a completed, unreviewed document can be re-run."})
+        if hasattr(document, "review"):
+            raise ValidationError({"detail": "This document has already entered correction. Its reviewed draft will not be overwritten."})
+        document.status = PrescriptionDocument.Status.PROCESSING
+        document.processing_started_at = timezone.now()
+        document.save(update_fields=["status", "processing_started_at"])
+        try:
+            task = process_prescription_document.delay(document.pk)
+        except Exception as exc:
+            document.status = PrescriptionDocument.Status.READY_FOR_REVIEW
             document.processing_started_at = None
             document.save(update_fields=["status", "processing_started_at"])
             raise ValidationError({"detail": f"Unable to queue extraction: {exc}"}) from exc

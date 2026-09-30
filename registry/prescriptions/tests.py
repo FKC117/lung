@@ -1,4 +1,5 @@
 from copy import deepcopy
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
@@ -35,6 +36,34 @@ from .services.draft_schema import COLLECTIONS, empty_draft, empty_observation, 
 from .services.extraction import validate_extraction
 from .services.intake_draft import build_intake_draft
 from .services.option_resolver import resolve_option, validate_approval_readiness, validate_selected_resolutions
+from .services.text_analysis import find_explicit_entities
+
+
+class PatientIdentifierExtractionTests(TestCase):
+    def test_hn_id_is_extracted_and_bmdc_registration_is_excluded(self):
+        page = SimpleNamespace(
+            page_number=1,
+            cleaned_text="HN ID: R170317016 ROKHSANA AFTAB Dr. Md. Arifur Rahman, Consultant, BMDC Reg No: A43908",
+            raw_text="",
+        )
+
+        identifiers, _phones, _doctors, _medications = find_explicit_entities([page])
+
+        self.assertEqual(len(identifiers), 1)
+        self.assertEqual(identifiers[0]["value"], "R170317016")
+        self.assertEqual(identifiers[0]["identifier_type"], "hn")
+        self.assertEqual(identifiers[0]["patient_field"], "registration_no")
+
+    def test_gemini_identifier_cannot_override_deterministic_hn(self):
+        source = {
+            "patient": {"identifiers": [{"value": "R170317016", "identifier_type": "hn", "patient_field": "registration_no"}]},
+            "gemini_extraction": {"patient": {"registration_no": {"value": "A43908"}, "name": {"value": "Rokhsana Aftab"}}, "observations": [], "unresolved_items": [], "warnings": []},
+        }
+
+        draft = normalize_extraction(source, document_id=22)
+
+        self.assertEqual(draft["patient"]["values"]["registration_no"], "R170317016")
+        self.assertEqual(draft["patient"]["values"]["name"], "Rokhsana Aftab")
 
 
 def record(temp_id="record-1", *, state="edited", values=None, evidence_refs=None):

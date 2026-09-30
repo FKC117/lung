@@ -141,7 +141,10 @@ def resolve_option(resource, value, *, filters=None):
     model = OPTION_RESOURCES[resource]
     queryset = model.objects.all()
     filters = filters or {}
-    valid_fields = {field.name for field in model._meta.fields}
+    # Callers use FK attnames (for example ``gene_id``) when scoping
+    # dependent choices. Django accepts those filters, but ``field.name``
+    # alone would incorrectly reject them before the query is run.
+    valid_fields = {name for field in model._meta.fields for name in (field.name, field.attname)}
     invalid_filters = set(filters) - valid_fields
     if invalid_filters:
         raise ValidationError({"filters": f"Invalid scope for {resource}: {', '.join(sorted(invalid_filters))}."})

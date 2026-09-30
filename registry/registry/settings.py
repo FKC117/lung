@@ -17,6 +17,11 @@ import environ
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+LOG_DIR = Path(os.getenv("DJANGO_LOG_DIR", str(BASE_DIR / "logs")))
+# Logging must be available to both the web process and a separately started
+# Celery worker.  Creating this small, local directory is safe at import time
+# and keeps operational files out of source control.
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 env = environ.Env(
     DEBUG=(bool, False),
@@ -160,6 +165,60 @@ CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "900"))
 CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "840"))
+# Keep the worker's Celery loggers under the explicit celery logger below;
+# otherwise Celery replaces the root configuration when a worker starts.
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+
+
+# Durable operational logs.  django.log is the single web-application stream:
+# Django exceptions/request failures and sanitized reports received from the
+# React client.  celery.log is reserved for worker/task activity.  Both rotate
+# before they grow without bound and remain local operational data, not Git
+# content or database records.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "{asctime} {levelname} {name} [pid={process}] {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "django_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "INFO",
+            "filename": LOG_DIR / "django.log",
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 10,
+            "encoding": "utf-8",
+            "formatter": "standard",
+        },
+        "celery_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "INFO",
+            "filename": LOG_DIR / "celery.log",
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 10,
+            "encoding": "utf-8",
+            "formatter": "standard",
+        },
+        "console": {
+            "class": "logging.StreamHandler",
+            "level": "INFO",
+            "formatter": "standard",
+        },
+    },
+    "loggers": {
+        "django": {"handlers": ["django_file", "console"], "level": "INFO", "propagate": False},
+        "django.request": {"handlers": ["django_file", "console"], "level": "ERROR", "propagate": False},
+        "django.server": {"handlers": ["django_file", "console"], "level": "INFO", "propagate": False},
+        "frontend": {"handlers": ["django_file", "console"], "level": "ERROR", "propagate": False},
+        "celery": {"handlers": ["celery_file", "console"], "level": "INFO", "propagate": False},
+        "celery.task": {"handlers": ["celery_file", "console"], "level": "INFO", "propagate": False},
+        "celery.tasks": {"handlers": ["celery_file", "console"], "level": "INFO", "propagate": False},
+    },
+}
 
 
 # Email

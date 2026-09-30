@@ -723,11 +723,13 @@ export interface PatientEntryPayload {
 
 export class ApiError extends Error {
   status: number;
+  payload: Record<string, unknown>;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, payload: Record<string, unknown> = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.payload = payload;
   }
 }
 
@@ -793,14 +795,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let message = `Request failed with status ${response.status}`;
     const contentType = response.headers.get("content-type") ?? "";
+    let payload: Record<string, unknown> = {};
     if (contentType.includes("application/json")) {
-      const payload = (await response.json()) as { detail?: string } & Record<
+      payload = (await response.json()) as { detail?: string } & Record<
         string,
         unknown
       >;
-      message = payload.detail || validationMessage(payload) || message;
+      const detail = typeof payload.detail === "string" ? payload.detail : "";
+      message = detail || validationMessage(payload) || message;
     }
-    const error = new ApiError(message, response.status);
+    const error = new ApiError(message, response.status, payload);
     reportFrontendError(error, { kind: "api-request", method, path, status: response.status });
     throw error;
   }
@@ -1980,6 +1984,13 @@ export function uploadPrescriptionDocument(file: File, patientId?: number) {
 export function processPrescriptionDocument(documentId: number) {
   return request<PrescriptionDocument>(
     `/api/prescriptions/documents/${documentId}/process/`,
+    { method: "POST" },
+  );
+}
+
+export function reprocessPrescriptionDocument(documentId: number) {
+  return request<PrescriptionDocument>(
+    `/api/prescriptions/documents/${documentId}/reprocess/`,
     { method: "POST" },
   );
 }

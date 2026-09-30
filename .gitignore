@@ -7,3 +7,4 @@ node_modules/
 dist/
 scrapper_plan.txt
 registry/media/
+registry/logs/

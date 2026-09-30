@@ -21,7 +21,14 @@ pathological_staging_results, clinical_tnm_stagings, pathological_tnm_stagings, 
 cancer_markers, treatments, surgeries, radiotherapies, recist_assessments, irecist_assessments,
 pathological_responses, progression_records, and survival_records. Use page numbers supplied in
 the source. Preserve wording faithfully. Never return option_id, database_id, or pk fields, and
-never return prose outside JSON."""
+never return prose outside JSON.
+
+Patient identifiers are safety-critical. Only identify a patient number when its label
+explicitly belongs to the patient (for example HN, HN ID, MRN, UHID, Patient ID, or Hospital
+Number). A doctor's BMDC registration, medical-council registration, licence, or any number
+next to Dr/Doctor/Consultant is never a patient identifier. If both HN and a clinician's
+registration number occur, extract the HN only; do not put the clinician number in patient.
+If the label is unclear, leave the patient identifier absent and add an unresolved item."""
 
 
 def empty_extraction():

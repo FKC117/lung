@@ -1,347 +1,71 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, ExternalLink, FileText, Play, Save, ShieldCheck, Upload, XCircle } from "lucide-react";
+import { ArrowRight, CheckCircle2, Clock3, Eye, FileText, Files, LoaderCircle, Play, Upload, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-
-import {
-  type LongitudinalIntakeDraft,
-  type PrescriptionDocument,
-  approvePrescriptionReview,
-  fetchEntriesOptions,
-  fetchPrescriptionDocuments,
-  processPrescriptionDocument,
-  publishPrescriptionReview,
-  rejectPrescriptionReview,
-  reopenPrescriptionReview,
-  startPrescriptionReview,
-  updatePrescriptionReview,
-  uploadPrescriptionDocument,
-} from "../api";
-import { LongitudinalDraftWorkspace } from "../components/intake/LongitudinalDraftWorkspace";
-import { authoritativeOptionResources } from "../components/intake/observationFieldSchema";
-
-const workspaceOptionResources = authoritativeOptionResources;
+import { ApiError, type PrescriptionDocument, fetchPrescriptionDocuments, processPrescriptionDocument, reprocessPrescriptionDocument, uploadPrescriptionDocument } from "../api";
 
 const statusLabel: Record<PrescriptionDocument["status"], string> = {
-  uploaded: "Ready to extract",
-  processing: "Processing",
-  ready_for_review: "Ready for review",
-  failed: "Processing failed",
+  uploaded: "Waiting to queue", processing: "Extracting", ready_for_review: "Ready for correction", failed: "Extraction failed",
 };
+const statusIcon = { uploaded: Clock3, processing: LoaderCircle, ready_for_review: CheckCircle2, failed: XCircle };
+const internalExtractionKeys = new Set(["canonical_draft", "field_tracking", "gemini_extraction", "validation"]);
 
-function formatDate(value: string | null) {
-  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
+function formatDate(value: string | null) { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—"; }
+function friendlyFailure(reason?: string) {
+  const text = (reason ?? "").toLowerCase();
+  if (text.includes("molecular-exons") || text.includes("invalid scope")) return "The system could not prepare molecular test choices. This configuration issue has been corrected; retry extraction.";
+  if (text.includes("google") || text.includes("gemini") || text.includes("503") || text.includes("unavailable")) return "The AI extraction service is temporarily unavailable. Please retry in a few minutes.";
+  if (text.includes("tesseract") || text.includes("ocr")) return "The document could not be read clearly. Retry once; if it fails again, upload a clearer scan or PDF.";
+  return "We could not process this document. Retry extraction; if it fails again, ask a registry administrator to review the processing log.";
+}
+function humanize(key: string) { return key.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function hasExtractedValue(value: unknown) {
+  return Array.isArray(value) ? value.length > 0 : value && typeof value === "object" ? Object.keys(value).length > 0 : value !== null && value !== undefined && value !== "";
 }
 
-function reviewMediaUrl(url: string) {
-  try {
-    const parsed = new URL(url, window.location.origin);
-    // Django serializers return an absolute development media URL. Route it
-    // through Vite so the embedded PDF has the same browser origin as the UI.
-    return parsed.pathname.startsWith("/media/")
-      ? `${parsed.pathname}${parsed.search}${parsed.hash}`
-      : url;
-  } catch {
-    return url;
-  }
+function ExtractedValue({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  if (value === null || value === undefined || value === "") return <span className="prescription-empty-value">Not supplied</span>;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return <span>{String(value)}</span>;
+  if (depth >= 5) return <span>{String(value)}</span>;
+  if (Array.isArray(value)) return <div className="prescription-extracted-list">{value.map((item, index) => <article key={index} className="prescription-extracted-item"><span className="prescription-extracted-item-number">{index + 1}</span><ExtractedValue value={item} depth={depth + 1} /></article>)}</div>;
+  if (typeof value === "object") return <dl className="prescription-extracted-fields">{Object.entries(value as Record<string, unknown>).map(([key, item]) => <div key={key}><dt>{humanize(key)}</dt><dd><ExtractedValue value={item} depth={depth + 1} /></dd></div>)}</dl>;
+  return <span>{String(value)}</span>;
 }
 
-type ReviewData = Record<string, unknown>;
-
-function displayLabel(value: string) {
-  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+function ExtractionPreview({ document, onClose, onCorrect }: { document: PrescriptionDocument; onClose: () => void; onCorrect: () => void }) {
+  const run = document.extraction_runs[0];
+  const extracted = run?.structured_data && typeof run.structured_data === "object" ? run.structured_data as Record<string, unknown> : {};
+  const populatedSections = Object.entries(extracted)
+    .filter(([key, value]) => !internalExtractionKeys.has(key) && hasExtractedValue(value));
+  return <div className="entry-modal-backdrop prescription-preview-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="entry-modal prescription-extraction-preview" role="dialog" aria-modal="true" aria-labelledby="extraction-preview-title" onMouseDown={(event) => event.stopPropagation()}>
+      <button className="entry-modal-close" type="button" onClick={onClose} aria-label="Close extracted data">×</button>
+      <p className="eyebrow">Complete extracted data · read only</p><h3 id="extraction-preview-title">{document.original_filename}</h3>
+      <p>Every extracted clinical suggestion is shown below. Nothing here has been saved as a clinical record. Confirm or correct the information in New Entry.</p>
+      {populatedSections.length ? <div className="prescription-preview-sections">{populatedSections.map(([key, value]) => <section key={key} className="prescription-preview-section"><h4>{humanize(key)}</h4><ExtractedValue value={value} /></section>)}</div> : <p className="hero-text">No structured suggestions are available yet. You can retry extraction from the history list.</p>}
+      <div className="prescription-preview-actions"><button className="secondary-button" type="button" onClick={onClose}>Close</button><button className="primary-button" type="button" onClick={onCorrect}>Correct in New Entry <ArrowRight size={15} /></button></div>
+    </section>
+  </div>;
 }
 
-const entrySectionLabels: Record<string, string> = {
-  patient: "Patient profile",
-  prescriber_candidates: "Prescription context",
-  medications: "Medication prescriptions",
-  date_candidates: "Prescription dates",
-  diagnosis_candidates: "Diagnosis",
-  staging_candidates: "Clinical and pathological staging",
-  histopathology_candidates: "Histopathology",
-  molecular_candidates: "Molecular pathology",
-  ihc_candidates: "IHC cycle",
-  cancer_marker_candidates: "Cancer markers",
-  treatment_candidates: "Treatment protocols",
-  administration_candidates: "Treatment administrations",
-  response_candidates: "RECIST / iRECIST response",
-  progression_candidates: "Disease progression records",
-  survival_candidates: "Survival follow-ups",
-  surgery_candidates: "Surgery",
-  radiotherapy_candidates: "Radiotherapy",
-  chronology: "Clinical timeline",
-  observations: "Clinical observations",
-  field_tracking: "Field coverage",
-  gemini_extraction: "Gemini enrichment cross-check",
-  unresolved_items: "Unresolved items",
-  form_field_candidates: "New Entry field candidates",
-  intake_draft: "New Entry draft",
-};
-
-function setReviewValue(data: ReviewData, path: Array<string | number>, nextValue: unknown): ReviewData {
-  const copy = structuredClone(data) as ReviewData;
-  let target: Record<string | number, unknown> = copy;
-  path.slice(0, -1).forEach((part) => { target = target[part] as Record<string | number, unknown>; });
-  target[path[path.length - 1]] = nextValue;
-  return copy;
-}
-
-function ReviewField({ label, value, path, onChange }: { label: string; value: unknown; path: Array<string | number>; onChange: (path: Array<string | number>, value: unknown) => void }) {
-  if (Array.isArray(value)) return <section className="prescription-review-group"><h4>{displayLabel(label)}</h4>{value.length ? value.map((item, index) => <article className="prescription-candidate-card" key={index}><p className="prescription-candidate-number">Candidate {index + 1}</p><ReviewField label={displayLabel(label)} value={item} path={[...path, index]} onChange={onChange} /></article>) : <p className="hero-text">None extracted.</p>}</section>;
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if ("value" in record) {
-      const confidence = typeof record.confidence === "number" ? Math.round(record.confidence * 100) : null;
-      return <label className="prescription-evidence-field"><span>{displayLabel(label)}</span><input className="auth-input" value={String(record.value ?? "")} onChange={(event) => onChange([...path, "value"], event.target.value)} /><small>{confidence !== null ? `${confidence}% confidence` : "Confidence not supplied"}{record.page ? ` · page ${record.page}` : ""}</small>{record.source_text ? <em>{String(record.source_text)}</em> : null}</label>;
-    }
-    return <section className="prescription-review-group"><h4>{displayLabel(label)}</h4>{Object.entries(record).filter(([key]) => !["source_text", "page", "confidence", "start", "end"].includes(key)).map(([key, item]) => <ReviewField key={key} label={key} value={item} path={[...path, key]} onChange={onChange} />)}</section>;
-  }
-  return <label className="prescription-evidence-field"><span>{displayLabel(label)}</span><input className="auth-input" value={value === null || value === undefined ? "" : String(value)} onChange={(event) => onChange(path, event.target.value)} /></label>;
-}
+type UploadState = "waiting" | "uploading" | "queued" | "duplicate" | "failed";
+type UploadProgress = Record<string, { state: UploadState; message?: string }>;
+const fileKey = (file: File) => `${file.name}-${file.size}-${file.lastModified}`;
 
 export default function PrescriptionReviewPage() {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const [file, setFile] = useState<File | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [reviewedData, setReviewedData] = useState<ReviewData>({});
-  const [reviewNotes, setReviewNotes] = useState("");
-  const [patientId, setPatientId] = useState("");
-  const [reviewError, setReviewError] = useState("");
-  const [readyToApprove, setReadyToApprove] = useState(false);
-  const [reopenReason, setReopenReason] = useState("");
-  const [reviewTab, setReviewTab] = useState("patient");
-  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
-  const [pdfLoadError, setPdfLoadError] = useState(false);
-  const [workspaceDirty, setWorkspaceDirty] = useState(false);
-  const documentsQuery = useQuery({ queryKey: ["prescription-documents"], queryFn: fetchPrescriptionDocuments });
-  const workspaceOptionsQuery = useQuery({ queryKey: ["prescription-workspace-options"], queryFn: () => fetchEntriesOptions(workspaceOptionResources), staleTime: 60_000 });
+  const navigate = useNavigate(); const queryClient = useQueryClient(); const inputRef = useRef<HTMLInputElement>(null);
+  const [files, setFiles] = useState<File[]>([]); const [progress, setProgress] = useState<UploadProgress>({}); const [previewDocument, setPreviewDocument] = useState<PrescriptionDocument | null>(null);
+  const documentsQuery = useQuery({ queryKey: ["prescription-documents"], queryFn: fetchPrescriptionDocuments, refetchInterval: (query) => query.state.data?.some((document) => document.status === "processing") ? 4000 : false });
   const documents = documentsQuery.data ?? [];
-  const selected = useMemo(
-    () => documents.find((document) => document.id === selectedId) ?? documents[0] ?? null,
-    [documents, selectedId],
-  );
-  const latestRun = selected?.extraction_runs[0];
-  const isPdf = Boolean(selected?.original_filename.toLowerCase().endsWith(".pdf"));
-  const reviewIssues = useMemo(() => {
-    const issues = [...(selected?.issues ?? []), ...(latestRun?.issues ?? [])];
-    return issues.filter(
-      (issue, index) =>
-        index === issues.findIndex((candidate) =>
-          candidate.code === issue.code &&
-          candidate.page_number === issue.page_number &&
-          candidate.message === issue.message,
-        ),
-    );
-  }, [latestRun?.issues, selected?.issues]);
-
-  useEffect(() => {
-    const data = selected?.review?.reviewed_data ?? latestRun?.structured_data ?? {};
-    setReviewedData(data);
-    setReviewNotes(selected?.review?.notes ?? "");
-    setPatientId(selected?.review?.selected_patient ? String(selected.review.selected_patient) : "");
-    setReviewError("");
-    setReadyToApprove(false);
-    setReopenReason("");
-    setReviewTab("patient");
-    setWorkspaceDirty(false);
-  }, [selected?.id, selected?.review?.updated_at, latestRun?.id]);
-  useEffect(() => {
-    if (!isPdf || !selected?.file) {
-      setPdfPreviewUrl(null);
-      setPdfLoadError(false);
-      return;
-    }
-    let objectUrl: string | null = null;
-    let cancelled = false;
-    setPdfPreviewUrl(null);
-    setPdfLoadError(false);
-    void fetch(reviewMediaUrl(selected.file), { credentials: "include" })
-      .then((response) => {
-        if (!response.ok) throw new Error("The original PDF could not be loaded.");
-        return response.blob();
-      })
-      .then((blob) => {
-        objectUrl = URL.createObjectURL(blob);
-        if (!cancelled) setPdfPreviewUrl(objectUrl);
-      })
-      .catch(() => { if (!cancelled) setPdfLoadError(true); });
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [isPdf, selected?.file]);
-
-  const uploadMutation = useMutation({
-    mutationFn: () => uploadPrescriptionDocument(file!),
-    onSuccess: (document) => {
-      setFile(null);
-      setSelectedId(document.id);
-      void queryClient.invalidateQueries({ queryKey: ["prescription-documents"] });
-    },
-  });
-  const processMutation = useMutation({
-    mutationFn: processPrescriptionDocument,
-    onSuccess: (document) => {
-      setSelectedId(document.id);
-      void queryClient.invalidateQueries({ queryKey: ["prescription-documents"] });
-    },
-  });
-  const refreshDocuments = async () => queryClient.invalidateQueries({ queryKey: ["prescription-documents"] });
-  const startReviewMutation = useMutation({ mutationFn: startPrescriptionReview, onSuccess: refreshDocuments });
-  const saveReviewMutation = useMutation({ mutationFn: ({ documentId, data }: { documentId: number; data: Record<string, unknown> }) => updatePrescriptionReview(documentId, { reviewed_data: data as LongitudinalIntakeDraft, notes: reviewNotes, selected_patient: patientId ? Number(patientId) : null }), onSuccess: async () => { setWorkspaceDirty(false); await refreshDocuments(); } });
-  const approveReviewMutation = useMutation({ mutationFn: approvePrescriptionReview, onSuccess: refreshDocuments });
-  const publishReviewMutation = useMutation({ mutationFn: publishPrescriptionReview, onSuccess: refreshDocuments });
-  const reopenReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => reopenPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
-  const rejectReviewMutation = useMutation({ mutationFn: ({ documentId, reason }: { documentId: number; reason: string }) => rejectPrescriptionReview(documentId, reason), onSuccess: refreshDocuments });
-
-  function saveReview() {
-    if (!selected) return;
-    setReviewError("");
-    saveReviewMutation.mutate({ documentId: selected.id, data: reviewedData });
-  }
-
-  async function saveThenApprove() {
-    if (!selected) return;
-    setReviewError("");
-    try {
-      if (workspaceDirty) await saveReviewMutation.mutateAsync({ documentId: selected.id, data: reviewedData });
-      await approveReviewMutation.mutateAsync(selected.id);
-    } catch (error) {
-      setReviewError(error instanceof Error ? error.message : "Unable to save and approve this review.");
-    }
-  }
-
-  async function correctInNewEntry() {
-    if (!selected) return;
-    setReviewError("");
-    try {
-      // The backend creates the immutable extraction snapshot on demand. The
-      // actual correction happens only in New Entry, not this workbench.
-      if (!selected.review) await startReviewMutation.mutateAsync(selected.id);
-      navigate(`/entries/new?prescription_document=${selected.id}`);
-    } catch (error) {
-      setReviewError(error instanceof Error ? error.message : "Unable to open the New Entry correction form.");
-    }
-  }
-
-  const reviewSections = [
-    { key: "patient", step: "Patient profile and matching", label: "Patient", fields: ["patient"] },
-    { key: "observations", step: "Longitudinal clinical draft", label: "Observations", fields: ["observations"] },
-    { key: "unresolved", step: "Review safeguards", label: "Unresolved items", fields: ["unresolved_items"] },
-  ].filter((section) => section.fields.some((field) => {
-    const value = reviewedData[field];
-    return Array.isArray(value) ? value.length > 0 : Boolean(value && typeof value === "object" && Object.keys(value as object).length);
-  }));
-  const activeReviewSection = reviewSections.find((section) => section.key === reviewTab) ?? reviewSections[0];
-
-  return (
-    <section className="page-grid prescription-workspace">
-      <section className="hero-panel hero-panel-tight">
-        <div className="hero-copy">
-          <p className="eyebrow">Prescription intake</p>
-          <h2>Extract, review, then decide</h2>
-          <p className="hero-text">Prescription data stays outside clinical records until a reviewer has checked every proposed item and its source evidence.</p>
-        </div>
-        <span className="data-pill"><ShieldCheck size={16} /> Human review required</span>
-      </section>
-
-      <section className="panel prescription-upload-panel">
-        <div>
-          <p className="eyebrow">1. Upload</p>
-          <h3>Prescription document</h3>
-          <p className="hero-text">PDF, image, or text. Duplicate files are rejected by the registry checksum.</p>
-        </div>
-        <label className="prescription-file-picker">
-          <Upload size={20} />
-          <span>{file ? file.name : "Choose a prescription"}</span>
-          <input type="file" accept="application/pdf,image/*,text/plain" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-        </label>
-        <button type="button" className="primary-button" disabled={!file || uploadMutation.isPending} onClick={() => uploadMutation.mutate()}>
-          <Upload size={16} /> {uploadMutation.isPending ? "Uploading…" : "Upload for extraction"}
-        </button>
-        {uploadMutation.error ? <p className="prescription-error">{uploadMutation.error.message}</p> : null}
-      </section>
-
-      <section className="prescription-layout">
-        <aside className="panel prescription-queue">
-          <div className="panel-heading"><div><p className="eyebrow">Review queue</p><h3>Documents</h3></div><span className="data-pill">{documents.length}</span></div>
-          {documentsQuery.isLoading ? <p className="hero-text">Loading documents…</p> : null}
-          {documents.map((document) => (
-            <button type="button" key={document.id} className={`prescription-queue-item${selected?.id === document.id ? " is-selected" : ""}`} onClick={() => setSelectedId(document.id)}>
-              <FileText size={18} />
-              <span><strong>{document.original_filename}</strong><small>{formatDate(document.created_at)} · {statusLabel[document.status]}</small></span>
-            </button>
-          ))}
-          {!documentsQuery.isLoading && !documents.length ? <p className="hero-text">No prescription documents have been uploaded.</p> : null}
-        </aside>
-
-        <section className="panel prescription-review">
-          {!selected ? <div className="prescription-empty"><FileText size={34} /><h3>Select or upload a prescription</h3><p>Its OCR text, extraction result, and validation warnings will appear here.</p></div> : <>
-            <div className="panel-heading">
-              <div><p className="eyebrow">Prescription review workbench</p><h3>{selected.original_filename}</h3><p className="hero-text">{selected.page_count || selected.pages.length || "No"} page{(selected.page_count || selected.pages.length) === 1 ? "" : "s"} · {statusLabel[selected.status]}{latestRun?.ai_model ? ` · Gemini enrichment: ${latestRun.ai_model}` : " · Deterministic extraction"}</p></div>
-              {documents.length > 1 ? <select className="filter-select prescription-document-switcher" value={selected.id} onChange={(event) => setSelectedId(Number(event.target.value))} aria-label="Switch prescription document">{documents.map((document) => <option key={document.id} value={document.id}>{document.original_filename}</option>)}</select> : null}
-              {selected.status === "uploaded" ? <button type="button" className="primary-button" disabled={processMutation.isPending} onClick={() => processMutation.mutate(selected.id)}><Play size={16} /> {processMutation.isPending ? "Extracting…" : "Run extraction"}</button> : null}
-              {latestRun?.status === "completed" && selected.review?.status !== "rejected" ? <button type="button" className="primary-button" disabled={startReviewMutation.isPending} onClick={() => void correctInNewEntry()}><FileText size={16} />{startReviewMutation.isPending ? "Opening…" : "Correct in New Entry"}</button> : null}
-            </div>
-            {processMutation.error ? <p className="prescription-error">{processMutation.error.message}</p> : null}
-            {reviewIssues.length ? <details className="prescription-issues"><summary><AlertTriangle size={18} /> {reviewIssues.length} validation item{reviewIssues.length === 1 ? "" : "s"} to resolve before approval</summary><div>{reviewIssues.map((issue) => <p key={`${issue.code}-${issue.page_number ?? "document"}-${issue.message}`}>{issue.page_number ? `Page ${issue.page_number}: ` : ""}{issue.message}</p>)}</div></details> : null}
-            {selected.review && reviewedData.schema_version === 1 ? <LongitudinalDraftWorkspace
-              document={selected}
-              draft={reviewedData as LongitudinalIntakeDraft}
-              catalog={workspaceOptionsQuery.data ?? {}}
-              disabled={selected.review.status === "approved" || selected.review.status === "rejected"}
-              saving={saveReviewMutation.isPending}
-              error={reviewError || saveReviewMutation.error?.message}
-              onChange={(draft) => {
-                setReviewedData(draft);
-                setWorkspaceDirty(true);
-                setPatientId(draft.patient.match_status === "existing" && draft.patient.patient_id ? String(draft.patient.patient_id) : "");
-              }}
-              onSave={saveReview}
-              dirty={workspaceDirty}
-              onApprove={selected.review.status !== "approved" && selected.review.status !== "rejected" ? saveThenApprove : undefined}
-              onPublish={selected.review.status === "approved" ? () => publishReviewMutation.mutate(selected.id) : undefined}
-              approving={approveReviewMutation.isPending}
-              publishing={publishReviewMutation.isPending}
-            /> : <div className="prescription-split-view">
-              <section className="prescription-source">
-                <div className="prescription-subheading"><div><h3>Source evidence</h3><p className="hero-text">Read pages in prescription order while reviewing.</p></div></div>
-                {isPdf && selected?.file ? <details className="prescription-original-file" open><summary>Original prescription PDF</summary><a className="secondary-button prescription-open-file" href={reviewMediaUrl(selected.file)} target="_blank" rel="noreferrer"><ExternalLink size={16} />Open in new tab</a>{pdfPreviewUrl ? <iframe title={`Original prescription: ${selected.original_filename}`} src={`${pdfPreviewUrl}#view=FitH`} className="prescription-pdf-viewer" /> : <p className="hero-text">{pdfLoadError ? "The inline preview is unavailable. Open the original PDF in a new tab." : "Loading original PDF…"}</p>}</details> : null}
-                {selected.pages.length ? <div className="prescription-source-pages">{selected.pages.map((item) => <article className="prescription-source-page" key={item.id}><div className="prescription-source-page-heading"><strong>Page {item.page_number}</strong>{item.ocr_confidence !== null && item.ocr_confidence !== undefined ? <span>OCR confidence {Math.round(item.ocr_confidence * 100)}%</span> : null}</div>{item.image ? <img className="prescription-page-image" src={reviewMediaUrl(item.image)} alt={`Prescription page ${item.page_number}`} /> : null}<pre className="prescription-ocr-text">{item.cleaned_text || item.raw_text || "No text was extracted from this page."}</pre></article>)}</div> : <p className="hero-text">Source pages will appear after extraction.</p>}
-              </section>
-              <section className="prescription-extraction">
-                <div className="prescription-subheading"><h3>Human review</h3><span className={`prescription-confidence ${selected.review?.status === "approved" ? "is-ready" : ""}`}>{selected.review?.status?.replaceAll("_", " ") ?? (latestRun?.status === "completed" ? "Ready to start" : "Awaiting extraction")}</span></div>
-                {latestRun?.error ? <p className="prescription-error">{latestRun.error}</p> : null}
-                {!selected.review && latestRun?.status === "completed" ? <div className="prescription-review-start"><p className="hero-text">Start review to create an editable, audited copy of the extraction. The original extraction remains unchanged.</p><button type="button" className="primary-button" disabled={startReviewMutation.isPending} onClick={() => startReviewMutation.mutate(selected.id)}><ShieldCheck size={16} />{startReviewMutation.isPending ? "Starting…" : "Start human review"}</button>{startReviewMutation.error ? <p className="prescription-error">{startReviewMutation.error.message}</p> : null}</div> : null}
-                {selected.review ? <div className="prescription-review-editor">
-                  <label className="filter-field"><span>Matched patient ID</span><input className="auth-input" inputMode="numeric" value={patientId} onChange={(event) => setPatientId(event.target.value.replace(/[^0-9]/g, ""))} disabled={selected.review.status === "approved" || selected.review.status === "rejected"} placeholder="Leave blank if not identified" /><p className="entry-field-help">Only enter a confirmed existing patient ID.</p></label>
-                  <label className="filter-field"><span>Reviewer notes</span><textarea className="auth-input entry-textarea" value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} disabled={selected.review.status === "approved" || selected.review.status === "rejected"} placeholder="Record corrections, uncertainty, or rejection reason." /></label>
-                  <section className="prescription-guided-review">
-                    <div><p className="eyebrow">3. Correct extracted facts</p><h4>Review one clinical area at a time</h4><p className="entry-field-help">Warnings are shown separately and are never converted into clinical facts.</p></div>
-                    {reviewSections.length ? <div className="prescription-review-tabs" role="tablist" aria-label="Review sections">{reviewSections.map((section) => <button type="button" role="tab" aria-selected={activeReviewSection?.key === section.key} className={activeReviewSection?.key === section.key ? "is-active" : ""} key={section.key} onClick={() => setReviewTab(section.key)}>{section.label}</button>)}</div> : <p className="hero-text">No supported clinical facts were extracted. Review the source and record a rejection or note.</p>}
-                    {activeReviewSection ? <div className="prescription-review-step"><div className="prescription-step-title"><span>{activeReviewSection.step} · section {reviewSections.findIndex((section) => section.key === activeReviewSection.key) + 1} of {reviewSections.length}</span><strong>{activeReviewSection.label}</strong></div>{activeReviewSection.fields.map((field) => reviewedData[field] !== undefined ? <ReviewField key={field} label={entrySectionLabels[field] ?? field} value={reviewedData[field]} path={[field]} onChange={(path, value) => setReviewedData((current) => setReviewValue(current, path, value))} /> : null)}</div> : null}
-                  </section>
-                  {reviewError ? <p className="prescription-error">{reviewError}</p> : null}
-                  {(saveReviewMutation.error || approveReviewMutation.error || reopenReviewMutation.error || rejectReviewMutation.error) ? <p className="prescription-error">{(saveReviewMutation.error || approveReviewMutation.error || reopenReviewMutation.error || rejectReviewMutation.error)?.message}</p> : null}
-                  {selected.review.status !== "rejected" ? <div className="prescription-review-actions"><button type="button" className="primary-button" disabled={saveReviewMutation.isPending} onClick={() => {
-                    if (JSON.stringify(reviewedData) !== JSON.stringify(selected.review?.reviewed_data)) {
-                      setReviewError("Save the review before opening New Entry so the handoff is auditable.");
-                      return;
-                    }
-                    navigate(`/entries/new?prescription_document=${selected.id}`);
-                  }}><FileText size={16} />Open in New Entry</button>{selected.review.status !== "approved" ? <><button type="button" className="secondary-button" disabled={saveReviewMutation.isPending} onClick={saveReview}><Save size={16} />{saveReviewMutation.isPending ? "Saving…" : "Save review"}</button><button type="button" className="secondary-button" onClick={() => setReadyToApprove(true)}>Finish corrections</button><button type="button" className="secondary-button prescription-reject-button" disabled={rejectReviewMutation.isPending} onClick={() => { if (!reviewNotes.trim()) { setReviewError("Enter a rejection reason in reviewer notes before rejecting."); return; } rejectReviewMutation.mutate({ documentId: selected.id, reason: reviewNotes.trim() }); }}><XCircle size={16} />Reject review</button></> : null}</div> : null}
-                  {readyToApprove && selected.review.status !== "approved" && selected.review.status !== "rejected" ? <section className="prescription-approval-step"><strong>Final check</strong><p>Save corrections before approval. Approval locks this review but does not publish clinical records.</p><button type="button" className="primary-button" disabled={approveReviewMutation.isPending || saveReviewMutation.isPending} onClick={() => approveReviewMutation.mutate(selected.id)}><Check size={16} />{approveReviewMutation.isPending ? "Approving…" : "Approve completed review"}</button></section> : null}
-                  {selected.review.status === "approved" ? <section className="prescription-approval-step"><strong>Approved review</strong><p>If a correction is needed, reopen this review with an auditable reason. It will return to in-review status.</p><label className="filter-field"><span>Reason for reopening</span><textarea className="auth-input entry-textarea" value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Explain what must be corrected." /></label><button type="button" className="secondary-button" disabled={reopenReviewMutation.isPending} onClick={() => { if (!reopenReason.trim()) { setReviewError("Enter a reason before reopening this review."); return; } reopenReviewMutation.mutate({ documentId: selected.id, reason: reopenReason.trim() }); }}><Save size={16} />{reopenReviewMutation.isPending ? "Reopening…" : "Reopen for correction"}</button></section> : null}
-                  {selected.review.changes.length ? <details className="prescription-audit"><summary>{selected.review.changes.length} audited change{selected.review.changes.length === 1 ? "" : "s"}</summary>{selected.review.changes.map((change) => <p key={change.id}>{change.field_path} · {formatDate(change.changed_at)}</p>)}</details> : null}
-                </div> : null}
-                {!selected.review && latestRun?.status !== "completed" ? <p className="hero-text">Run extraction to receive reviewable, source-linked clinical proposals. Approval never publishes clinical records.</p> : null}
-              </section>
-            </div>}
-          </>}
-        </section>
-      </section>
-    </section>
-  );
+  const summary = useMemo(() => ({ total: documents.length, extracting: documents.filter((document) => document.status === "processing").length, ready: documents.filter((document) => document.status === "ready_for_review").length, failed: documents.filter((document) => document.status === "failed").length }), [documents]);
+  const uploadMutation = useMutation({ mutationFn: async () => { for (const file of files) { const key = fileKey(file); setProgress((current) => ({ ...current, [key]: { state: "uploading" } })); try { const document = await uploadPrescriptionDocument(file); await processPrescriptionDocument(document.id); setProgress((current) => ({ ...current, [key]: { state: "queued", message: "Queued for OCR and Gemini extraction" } })); } catch (error) { const duplicate = error instanceof ApiError && error.status === 409; setProgress((current) => ({ ...current, [key]: { state: duplicate ? "duplicate" : "failed", message: duplicate ? "Already uploaded — identical file content was skipped" : error instanceof Error ? error.message : "Upload failed" } })); } } await queryClient.invalidateQueries({ queryKey: ["prescription-documents"] }); } });
+  const retryMutation = useMutation({ mutationFn: processPrescriptionDocument, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["prescription-documents"] }) });
+  const reprocessMutation = useMutation({ mutationFn: reprocessPrescriptionDocument, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["prescription-documents"] }) });
+  function chooseFiles(nextFiles: FileList | null) { const selected = Array.from(nextFiles ?? []); setFiles(selected); setProgress(Object.fromEntries(selected.map((file) => [fileKey(file), { state: "waiting" as const }]))); }
+  return <section className="page-grid prescription-intake-page">
+    <section className="hero-panel prescription-intake-hero"><div className="hero-copy"><p className="eyebrow">Prescription intake</p><h2>Upload the backlog. We process it in the background.</h2><p className="hero-text">This page is only for intake and upload history. Clinical correction happens in New Entry after extraction is ready.</p></div><div className="prescription-intake-stats"><span><strong>{summary.total}</strong> uploaded</span><span><strong>{summary.extracting}</strong> extracting</span><span><strong>{summary.ready}</strong> ready</span></div></section>
+    <section className="panel prescription-bulk-upload"><div className="prescription-upload-copy"><p className="eyebrow">Bulk upload</p><h3>Drop a set of prescriptions here</h3><p className="hero-text">PDF, image, or text files. Each document is checksummed, uploaded, and queued for OCR + Gemini automatically.</p></div><div className="prescription-upload-actions"><input ref={inputRef} className="prescription-hidden-input" type="file" multiple accept="application/pdf,image/*,text/plain" onChange={(event) => chooseFiles(event.target.files)} /><button type="button" className="secondary-button prescription-choose-files" onClick={() => inputRef.current?.click()}><Files size={18} />Choose files</button><button type="button" className="primary-button" disabled={!files.length || uploadMutation.isPending} onClick={() => uploadMutation.mutate()}><Upload size={18} />{uploadMutation.isPending ? "Queueing files…" : `Upload${files.length ? ` ${files.length} file${files.length === 1 ? "" : "s"}` : ""}`}</button></div>{files.length ? <div className="prescription-upload-list" aria-live="polite">{files.map((file) => { const item = progress[fileKey(file)] ?? { state: "waiting" as const }; return <article key={fileKey(file)} className={`prescription-upload-item is-${item.state}`}><FileText size={17} /><span><strong>{file.name}</strong><small>{item.message ?? (item.state === "waiting" ? "Ready to upload" : item.state === "uploading" ? "Uploading…" : item.state === "queued" ? "Queued" : "Failed")}</small></span></article>; })}</div> : <button type="button" className="prescription-drop-target" onClick={() => inputRef.current?.click()}><Upload size={22} /><span>Choose one or many prescription files</span><small>Duplicate files are safely skipped by checksum.</small></button>}</section>
+    <section className="panel prescription-history"><div className="panel-heading"><div><p className="eyebrow">Uploaded previously</p><h3>Prescription history</h3><p className="hero-text">Preview extracted suggestions, then open New Entry only when a document is ready for correction.</p></div>{summary.failed ? <span className="data-pill prescription-failed-count">{summary.failed} needs attention</span> : null}</div>{documentsQuery.isLoading ? <p className="hero-text">Loading uploads…</p> : null}{!documentsQuery.isLoading && !documents.length ? <div className="prescription-history-empty"><Files size={28} /><p>No prescriptions uploaded yet.</p></div> : null}<div className="prescription-history-list">{documents.map((document) => { const Icon = statusIcon[document.status]; const latestRun = document.extraction_runs[0]; const failureReason = latestRun?.error || latestRun?.issues.find((issue) => issue.severity === "error")?.message || document.issues.find((issue) => issue.severity === "error")?.message; return <article className={`prescription-history-row${document.status === "failed" ? " is-failed" : ""}`} key={document.id}><span className={`prescription-history-status is-${document.status}`}><Icon size={18} /></span><div className="prescription-history-file"><strong>{document.original_filename}</strong><small>{formatDate(document.created_at)} · {document.page_count ? `${document.page_count} page${document.page_count === 1 ? "" : "s"}` : "Awaiting OCR"}{latestRun?.ai_model ? ` · ${latestRun.ai_model}` : ""}</small></div><span className={`prescription-history-state is-${document.status}`}>{statusLabel[document.status]}</span><div className="prescription-history-actions">{document.status === "uploaded" || document.status === "failed" ? <button type="button" className="secondary-button" disabled={retryMutation.isPending} onClick={() => retryMutation.mutate(document.id)}><Play size={15} />{document.status === "failed" ? "Retry extraction" : "Queue extraction"}</button> : null}{document.status === "ready_for_review" ? <><button type="button" className="secondary-button" onClick={() => setPreviewDocument(document)}><Eye size={15} />View extracted data</button>{!document.review ? <button type="button" className="secondary-button" disabled={reprocessMutation.isPending} onClick={() => reprocessMutation.mutate(document.id)}><Play size={15} />Re-run extraction</button> : null}<button type="button" className="primary-button" onClick={() => navigate(`/entries/new?prescription_document=${document.id}`)}>Correct in New Entry <ArrowRight size={15} /></button></> : null}</div>{document.status === "failed" ? <p className="prescription-failure-reason"><strong>What you can do:</strong> {friendlyFailure(failureReason)}</p> : null}</article>; })}</div>{uploadMutation.error ? <p className="prescription-error">{uploadMutation.error.message}</p> : null}{retryMutation.error ? <p className="prescription-error">{retryMutation.error.message}</p> : null}{reprocessMutation.error ? <p className="prescription-error">{reprocessMutation.error.message}</p> : null}</section>
+    {previewDocument ? <ExtractionPreview document={previewDocument} onClose={() => setPreviewDocument(null)} onCorrect={() => navigate(`/entries/new?prescription_document=${previewDocument.id}`)} /> : null}
+  </section>;
 }
