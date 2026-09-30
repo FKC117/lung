@@ -1,7 +1,15 @@
 """LLM extraction with a deliberately narrow, review-only output contract."""
 import json
+import logging
+from hashlib import sha256
 
 from django.conf import settings
+from django.utils import timezone
+
+from prescriptions.models import LLMInvocation
+
+
+logger = logging.getLogger("celery.tasks")
 
 
 SCHEMA_VERSION = "1"
@@ -75,8 +83,68 @@ def validate_extraction(data):
     return {key: data[key] for key in ("patient", "observations", "unresolved_items", "warnings")}
 
 
-def extract_structured_data(pages):
+def _text_hash(value):
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _usage_details(response):
+    """Extract stable Gemini usage fields without persisting opaque SDK objects."""
+    usage = getattr(response, "usage_metadata", None)
+    if not usage:
+        return {}, None, None, None
+    values = {}
+    for source, target in (
+        ("prompt_token_count", "input_tokens"),
+        ("candidates_token_count", "output_tokens"),
+        ("total_token_count", "total_tokens"),
+    ):
+        value = getattr(usage, source, None)
+        if isinstance(value, int):
+            values[target] = value
+    return values, values.get("input_tokens"), values.get("output_tokens"), values.get("total_tokens")
+
+
+def _finish_invocation(invocation, *, status, output_text="", error="", response=None):
+    if not invocation:
+        return
+    usage_metadata, input_tokens, output_tokens, total_tokens = _usage_details(response) if response else ({}, None, None, None)
+    invocation.status = status
+    invocation.output_text = output_text
+    invocation.output_sha256 = _text_hash(output_text) if output_text else ""
+    invocation.output_characters = len(output_text)
+    invocation.input_tokens = input_tokens
+    invocation.output_tokens = output_tokens
+    invocation.total_tokens = total_tokens
+    invocation.usage_metadata = usage_metadata
+    invocation.provider_request_id = str(getattr(response, "response_id", "") or "") if response else ""
+    invocation.error = str(error)[:10_000]
+    invocation.completed_at = timezone.now()
+    invocation.save(update_fields=[
+        "status", "output_text", "output_sha256", "output_characters", "input_tokens", "output_tokens",
+        "total_tokens", "usage_metadata", "provider_request_id", "error", "completed_at",
+    ])
+
+
+def extract_structured_data(pages, *, extraction_run=None):
     """Call Gemini and return both immutable raw output and validated review data."""
+    page_list = list(pages)
+    document_id = getattr(page_list[0], "document_id", None) if page_list else getattr(extraction_run, "document_id", None)
+    contents = build_contents(page_list)
+    invocation = None
+    if extraction_run:
+        invocation = LLMInvocation.objects.create(
+            document_id=document_id,
+            extraction_run=extraction_run,
+            provider="gemini",
+            request_kind="generate_content",
+            model_name=settings.PRESCRIPTION_EXTRACTION_MODEL,
+            prompt_version=settings.PRESCRIPTION_EXTRACTION_PROMPT_VERSION,
+            system_instruction=SYSTEM_INSTRUCTION,
+            input_text=contents,
+            input_sha256=_text_hash(contents),
+            input_characters=len(contents),
+            status=LLMInvocation.Status.RUNNING,
+        )
     if not settings.GOOGLE_API_KEY or not settings.PRESCRIPTION_EXTRACTION_MODEL:
         data = empty_extraction()
         missing = []
@@ -86,26 +154,77 @@ def extract_structured_data(pages):
             missing.append("PRESCRIPTION_EXTRACTION_MODEL")
         data["unresolved_items"].append({"type": "structured_extraction", "reason": f"Missing configuration: {', '.join(missing)}."})
         data["warnings"].append("Structured extraction is unavailable until its provider and model are configured.")
+        _finish_invocation(invocation, status=LLMInvocation.Status.SKIPPED, error=f"Missing configuration: {', '.join(missing)}.")
         return data, "", "unconfigured", ""
+
+    logger.info(
+        "Gemini extraction request started document_id=%s pages=%s model=%s input_characters=%s",
+        document_id,
+        len(page_list),
+        settings.PRESCRIPTION_EXTRACTION_MODEL,
+        len(contents),
+    )
 
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-    response = client.models.generate_content(
-        model=settings.PRESCRIPTION_EXTRACTION_MODEL,
-        contents=build_contents(pages),
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            response_mime_type="application/json",
-            temperature=0,
-        ),
-    )
+    try:
+        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        response = client.models.generate_content(
+            model=settings.PRESCRIPTION_EXTRACTION_MODEL,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                temperature=0,
+            ),
+        )
+    except Exception:
+        # Do not log prompt content, response content, credentials, or patient
+        # data.  The exception trace and identifiers are enough to diagnose a
+        # provider outage or configuration problem.
+        logger.exception(
+            "Gemini extraction request failed document_id=%s pages=%s model=%s",
+            document_id,
+            len(page_list),
+            settings.PRESCRIPTION_EXTRACTION_MODEL,
+        )
+        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, error="Gemini provider request failed; see Celery log for traceback.")
+        raise
     raw_response = response.text or ""
     if not raw_response:
+        logger.error(
+            "Gemini extraction returned an empty response document_id=%s pages=%s model=%s",
+            document_id,
+            len(page_list),
+            settings.PRESCRIPTION_EXTRACTION_MODEL,
+        )
+        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, response=response, error="Gemini returned an empty response.")
         raise ValueError("The extractor returned an empty response.")
     try:
         data = json.loads(raw_response)
     except json.JSONDecodeError as exc:
+        logger.exception(
+            "Gemini extraction returned invalid JSON document_id=%s pages=%s model=%s response_characters=%s",
+            document_id,
+            len(page_list),
+            settings.PRESCRIPTION_EXTRACTION_MODEL,
+            len(raw_response),
+        )
+        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, output_text=raw_response, response=response, error="Gemini returned invalid JSON.")
         raise ValueError("The extractor returned invalid JSON.") from exc
-    return validate_extraction(data), raw_response, settings.PRESCRIPTION_EXTRACTION_PROMPT_VERSION, settings.PRESCRIPTION_EXTRACTION_MODEL
+    try:
+        validated = validate_extraction(data)
+    except Exception as exc:
+        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, output_text=raw_response, response=response, error=str(exc))
+        raise
+    _finish_invocation(invocation, status=LLMInvocation.Status.SUCCEEDED, output_text=raw_response, response=response)
+    logger.info(
+        "Gemini extraction request completed document_id=%s pages=%s model=%s response_characters=%s observations=%s",
+        document_id,
+        len(page_list),
+        settings.PRESCRIPTION_EXTRACTION_MODEL,
+        len(raw_response),
+        len(validated["observations"]),
+    )
+    return validated, raw_response, settings.PRESCRIPTION_EXTRACTION_PROMPT_VERSION, settings.PRESCRIPTION_EXTRACTION_MODEL

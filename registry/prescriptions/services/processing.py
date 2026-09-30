@@ -92,7 +92,10 @@ def process_document(document):
         # Deterministic evidence remains the baseline. Gemini enriches the
         # review-only payload and can never block OCR or create clinical data.
         try:
-            gemini_data, raw_response, prompt_version, model_name = extract_structured_data(stored_pages)
+            gemini_data, raw_response, prompt_version, model_name = extract_structured_data(
+                stored_pages,
+                extraction_run=run,
+            )
             result["gemini_extraction"] = gemini_data
             if gemini_data.get("warnings"):
                 result["warnings"].extend(str(warning) for warning in gemini_data["warnings"])

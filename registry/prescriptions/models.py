@@ -129,6 +129,44 @@ class PrescriptionBatchItem(models.Model):
         ]
 
 
+class LLMInvocation(models.Model):
+    """Immutable audit record for one provider request; never stores credentials."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        SUCCEEDED = "succeeded", "Succeeded"
+        FAILED = "failed", "Failed"
+        SKIPPED = "skipped", "Skipped"
+
+    document = models.ForeignKey(PrescriptionDocument, on_delete=models.CASCADE, related_name="llm_invocations")
+    extraction_run = models.ForeignKey(ExtractionRun, on_delete=models.SET_NULL, null=True, blank=True, related_name="llm_invocations")
+    batch_item = models.ForeignKey(PrescriptionBatchItem, on_delete=models.SET_NULL, null=True, blank=True, related_name="llm_invocations")
+    provider = models.CharField(max_length=32, default="gemini")
+    request_kind = models.CharField(max_length=32, default="generate_content")
+    model_name = models.CharField(max_length=128, blank=True)
+    prompt_version = models.CharField(max_length=64, blank=True)
+    system_instruction = models.TextField(blank=True)
+    input_text = models.TextField(blank=True)
+    input_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
+    input_characters = models.PositiveIntegerField(default=0)
+    input_tokens = models.PositiveIntegerField(null=True, blank=True)
+    output_text = models.TextField(blank=True)
+    output_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
+    output_characters = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(null=True, blank=True)
+    total_tokens = models.PositiveIntegerField(null=True, blank=True)
+    usage_metadata = models.JSONField(default=dict, blank=True)
+    provider_request_id = models.CharField(max_length=255, blank=True, db_index=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    error = models.TextField(blank=True)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-requested_at", "-id")
+
+
 class ExtractionIssue(models.Model):
     class Severity(models.TextChoices):
         INFO = "info", "Info"

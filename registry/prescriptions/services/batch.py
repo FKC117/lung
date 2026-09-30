@@ -10,7 +10,7 @@ import tempfile
 from django.conf import settings
 from django.utils import timezone
 
-from prescriptions.models import PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument
+from prescriptions.models import LLMInvocation, PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument
 from prescriptions.services.extraction import SYSTEM_INSTRUCTION, build_contents, validate_extraction
 from prescriptions.services.intake_draft import build_intake_draft
 
@@ -51,16 +51,38 @@ def create_batch_job(*, document_ids, user, display_name):
     )
     try:
         rows = []
+        request_inputs = {}
         items = []
         for document in documents:
             request = _request_for(document)
             serialized = json.dumps(request, separators=(",", ":"), ensure_ascii=False)
             rows.append(serialized)
+            request_inputs[document.pk] = request["request"]["contents"][0]["parts"][0]["text"]
             items.append(PrescriptionBatchItem(
                 batch_job=job, document=document, request_key=request["key"],
                 input_sha256=hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
             ))
         PrescriptionBatchItem.objects.bulk_create(items)
+        batch_items = {
+            item.document_id: item
+            for item in PrescriptionBatchItem.objects.filter(batch_job=job)
+        }
+        LLMInvocation.objects.bulk_create([
+            LLMInvocation(
+                document=document,
+                batch_item=batch_items[document.pk],
+                provider="gemini",
+                request_kind="batch_generate_content",
+                model_name=settings.PRESCRIPTION_EXTRACTION_MODEL,
+                prompt_version=settings.PRESCRIPTION_EXTRACTION_PROMPT_VERSION,
+                system_instruction=SYSTEM_INSTRUCTION,
+                input_text=request_inputs[document.pk],
+                input_sha256=hashlib.sha256(request_inputs[document.pk].encode("utf-8")).hexdigest(),
+                input_characters=len(request_inputs[document.pk]),
+                status=LLMInvocation.Status.QUEUED,
+            )
+            for document in documents
+        ])
         from google import genai
         from google.genai import types
 
@@ -78,10 +100,16 @@ def create_batch_job(*, document_ids, user, display_name):
         job.status = PrescriptionBatchJob.Status.SUBMITTED
         job.submitted_at = timezone.now()
         job.save(update_fields=["provider_job_name", "status", "submitted_at", "updated_at"])
+        LLMInvocation.objects.filter(batch_item__batch_job=job).update(status=LLMInvocation.Status.RUNNING)
     except Exception as exc:
         job.status = PrescriptionBatchJob.Status.FAILED
         job.error = str(exc)
         job.save(update_fields=["status", "error", "updated_at"])
+        LLMInvocation.objects.filter(batch_item__batch_job=job).update(
+            status=LLMInvocation.Status.FAILED,
+            error="Gemini batch submission failed; see Celery log for traceback.",
+            completed_at=timezone.now(),
+        )
         raise
     return job
 
@@ -93,6 +121,32 @@ def _response_text(response):
         return ""
     parts = candidates[0].get("content", {}).get("parts", [])
     return "".join(str(part.get("text", "")) for part in parts if isinstance(part, dict))
+
+
+def _store_batch_invocation_result(item, response, *, output_text="", error="", succeeded=False):
+    invocation = item.llm_invocations.order_by("-id").first()
+    if not invocation:
+        return
+    usage = response.get("usageMetadata", response.get("usage_metadata", {})) if isinstance(response, dict) else {}
+    usage = usage if isinstance(usage, dict) else {}
+    input_tokens = usage.get("promptTokenCount", usage.get("prompt_token_count"))
+    output_tokens = usage.get("candidatesTokenCount", usage.get("candidates_token_count"))
+    total_tokens = usage.get("totalTokenCount", usage.get("total_token_count"))
+    invocation.status = LLMInvocation.Status.SUCCEEDED if succeeded else LLMInvocation.Status.FAILED
+    invocation.output_text = output_text
+    invocation.output_sha256 = hashlib.sha256(output_text.encode("utf-8")).hexdigest() if output_text else ""
+    invocation.output_characters = len(output_text)
+    invocation.input_tokens = input_tokens if isinstance(input_tokens, int) else None
+    invocation.output_tokens = output_tokens if isinstance(output_tokens, int) else None
+    invocation.total_tokens = total_tokens if isinstance(total_tokens, int) else None
+    invocation.usage_metadata = {key: value for key, value in usage.items() if isinstance(value, (str, int, float, bool, type(None)))}
+    invocation.provider_request_id = str(response.get("responseId", response.get("response_id", ""))) if isinstance(response, dict) else ""
+    invocation.error = str(error)[:10_000]
+    invocation.completed_at = timezone.now()
+    invocation.save(update_fields=[
+        "status", "output_text", "output_sha256", "output_characters", "input_tokens", "output_tokens",
+        "total_tokens", "usage_metadata", "provider_request_id", "error", "completed_at",
+    ])
 
 
 def sync_batch_job(job):
@@ -133,8 +187,10 @@ def sync_batch_job(job):
         if row.get("error"):
             item.status = PrescriptionBatchItem.Status.FAILED
             item.error = json.dumps(row["error"])
+            _store_batch_invocation_result(item, row.get("response", {}), error="Gemini batch item failed.")
         else:
-            raw = _response_text(row.get("response", {}))
+            provider_response = row.get("response", {})
+            raw = _response_text(provider_response)
             item.raw_response = raw
             try:
                 data = validate_extraction(json.loads(raw))
@@ -154,9 +210,11 @@ def sync_batch_job(job):
                     run.prompt_version = job.prompt_version
                     run.save(update_fields=["structured_data", "raw_response", "ai_model", "prompt_version"])
                 item.status = PrescriptionBatchItem.Status.COMPLETED
+                _store_batch_invocation_result(item, provider_response, output_text=raw, succeeded=True)
             except (ValueError, json.JSONDecodeError) as exc:
                 item.status = PrescriptionBatchItem.Status.FAILED
                 item.error = f"Invalid structured extraction: {exc}"
+                _store_batch_invocation_result(item, provider_response, output_text=raw, error=item.error)
         item.completed_at = timezone.now()
         item.save(update_fields=["status", "raw_response", "error", "attempts", "completed_at"])
     job.status = PrescriptionBatchJob.Status.COMPLETED
