@@ -54,6 +54,17 @@ class PatientIdentifierExtractionTests(TestCase):
         self.assertEqual(identifiers[0]["identifier_type"], "hn")
         self.assertEqual(identifiers[0]["patient_field"], "registration_no")
 
+    def test_header_layout_hn_value_above_label_is_extracted(self):
+        page = SimpleNamespace(
+            page_number=1,
+            cleaned_text="R170317016\nROKHSANA AFTAB\n51Y 8M 28D\nHN ID :\nDr. Md. Arifur Rahman\nBMDC Reg No: A43908\nright paratracheal region",
+            raw_text="",
+        )
+
+        identifiers, _phones, _doctors, _medications = find_explicit_entities([page])
+
+        self.assertEqual([(item["identifier_type"], item["value"]) for item in identifiers], [("hn", "R170317016")])
+
     def test_gemini_identifier_cannot_override_deterministic_hn(self):
         source = {
             "patient": {"identifiers": [{"value": "R170317016", "identifier_type": "hn", "patient_field": "registration_no"}]},

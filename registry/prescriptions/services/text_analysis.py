@@ -29,9 +29,11 @@ NAMED_DATE = re.compile(
     re.IGNORECASE,
 )
 IDENTIFIER = re.compile(
-    r"\b(?P<label>h\.?\s*/?\s*n\.?(?:\s*(?:id|no|number))?|hospital\s*(?:id|no|number)|registration|reg(?:istration)?\s*(?:id|no|number)?|patient\s*(?:id|no|number)?|mrn|uhid)(?:\s*(?:id|no|number))?\s*[:#-]?\s*(?P<value>[A-Z0-9][A-Z0-9/-]{2,})\b",
+    r"\b(?P<label>h\.?\s*/?\s*n\.?(?:\s*(?:id|no|number))?|hospital\s*(?:id|no|number)|registration(?:\s*(?:id|no|number))?|reg\s*(?:id|no|number)|patient\s*(?:id|no|number)|mrn|uhid)(?:\s*(?:id|no|number))?\s*[:#-]?\s*(?P<value>[A-Z0-9][A-Z0-9/-]{2,})\b",
     re.IGNORECASE,
 )
+HN_LABEL_LINE = re.compile(r"^\s*h\.?\s*/?\s*n\.?(?:\s*(?:id|no|number))?\s*[:#-]?\s*$", re.IGNORECASE)
+HEADER_IDENTIFIER_VALUE = re.compile(r"^[A-Z]{0,4}\d[A-Z0-9/-]{5,}$", re.IGNORECASE)
 # A doctor's BMDC registration is commonly printed beside the patient header.
 # It can contain the same "Reg No" wording but is never a patient identifier.
 CLINICIAN_REGISTRATION_PREFIX = re.compile(
@@ -123,10 +125,41 @@ def line_evidence(page, line, value, confidence):
     return {"value": value, "source_text": line.strip(), "page": page.page_number, "confidence": confidence}
 
 
+def find_header_hn_identifiers(page, text):
+    """Read header layouts where the HN value is printed above its `HN ID` label.
+
+    Scanned prescriptions often preserve columns as consecutive lines, e.g.
+    `R170317016`, patient name, age, then `HN ID:`.  This is explicit labelled
+    evidence, not a guess: only an identifier-shaped value within four lines
+    directly above an HN label is accepted.
+    """
+    items = []
+    lines = text.splitlines(keepends=True)
+    offsets, position = [], 0
+    for line in lines:
+        offsets.append(position)
+        position += len(line)
+    for index, line in enumerate(lines):
+        if not HN_LABEL_LINE.match(line):
+            continue
+        for candidate_index in range(index - 1, max(-1, index - 5), -1):
+            candidate = lines[candidate_index].strip()
+            if not HEADER_IDENTIFIER_VALUE.fullmatch(candidate):
+                continue
+            start = offsets[candidate_index] + lines[candidate_index].find(candidate)
+            item = evidence(page.page_number, text, start, start + len(candidate), candidate, 0.99)
+            item["identifier_type"] = "hn"
+            item["patient_field"] = "registration_no"
+            items.append(item)
+            break
+    return items
+
+
 def find_explicit_entities(pages):
     identifiers, phones, doctors, medications = [], [], [], []
     for page in pages:
         text = page.cleaned_text or page.raw_text
+        identifiers.extend(find_header_hn_identifiers(page, text))
         for match in IDENTIFIER.finditer(text):
             # Reject `BMDC Reg No: A43908` while retaining `HN ID: R...`.
             prefix = text[max(0, match.start() - 90):match.start()]
@@ -160,7 +193,18 @@ def find_explicit_entities(pages):
                 "order_status": line_evidence(page, line, "prescribed", 0.99),
             }
             medications.append(item)
-    return identifiers, phones, doctors, medications
+    # Repeated page headers are expected; retain one evidence item per unique
+    # identifier value/type and prevent the same HN from appearing twice when
+    # both header layouts and inline labels occur.
+    unique_identifiers = []
+    seen_identifiers = set()
+    for item in identifiers:
+        key = (item.get("identifier_type"), str(item.get("value")).upper())
+        if key in seen_identifiers:
+            continue
+        seen_identifiers.add(key)
+        unique_identifiers.append(item)
+    return unique_identifiers, phones, doctors, medications
 
 
 def analyze_text(pages):
