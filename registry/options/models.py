@@ -250,6 +250,7 @@ class VaccinationDose(models.Model):
 
 class DiagnosisDiseaseGroup(models.Model):
     name = models.CharField(max_length=191, unique=True)
+    icd10_code = models.CharField(max_length=16, unique=True, null=True, blank=True, db_index=True)
 
     def __str__(self):
         return self.name
@@ -262,9 +263,10 @@ class DiagnosisDiseaseSubgroup(models.Model):
         related_name="subgroups"
     )
     name = models.CharField(max_length=191)
+    icd10_code = models.CharField(max_length=16, null=True, blank=True, db_index=True)
 
     class Meta:
-        unique_together = ("disease_group", "name")
+        unique_together = (("disease_group", "name"), ("disease_group", "icd10_code"))
 
     def __str__(self):
         return self.name

@@ -38,6 +38,13 @@ gender, patient_identifier, registration_no, and phone. Each populated patient k
 the same value/source_text/page/confidence evidence object. Leave a patient key absent when
 the document does not support it.
 
+For every diagnoses record, preserve the source wording in diagnosis_in_details. You may also
+provide disease_group as an ICD-10 category-code candidate (for example C34) when the wording
+supports that category. Provide disease_subgroup only as a more-specific ICD-10 code candidate
+(for example C34.11) when the source explicitly supports the required primary site and
+laterality. Do not infer a lobe, laterality, malignant status, or code specificity not stated
+in the source. These are evidence-backed suggestions for a human reviewer, never database IDs.
+
 Patient identifiers are safety-critical. Only identify a patient number when its label
 explicitly belongs to the patient (for example HN, HN ID, MRN, UHID, Patient ID, or Hospital
 Number). A doctor's BMDC registration, medical-council registration, licence, or any number

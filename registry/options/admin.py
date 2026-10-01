@@ -117,7 +117,6 @@ lookup_models = [
     CovidHistory,
     Vaccine,
     VaccinationDose,
-    DiagnosisDiseaseGroup,
     DiagnosisPrimarySite,
     DiagnosisMetastaticSite,
     DiagnosisLaterality,
@@ -178,6 +177,13 @@ for model in lookup_models:
     admin.site.register(model, LookupAdmin)
 
 
+@admin.register(DiagnosisDiseaseGroup)
+class DiagnosisDiseaseGroupAdmin(ImportExportModelAdmin):
+    list_display = ("id", "icd10_code", "name")
+    search_fields = ("icd10_code", "name")
+    ordering = ("icd10_code", "name")
+
+
 @admin.register(Center)
 class CenterAdmin(ImportExportModelAdmin):
     list_display = ("id", "name", "source_created_at", "source_updated_at")
@@ -205,10 +211,10 @@ class ThanaAdmin(ImportExportModelAdmin):
 
 @admin.register(DiagnosisDiseaseSubgroup)
 class DiagnosisDiseaseSubgroupAdmin(ImportExportModelAdmin):
-    list_display = ("id", "name", "disease_group")
+    list_display = ("id", "icd10_code", "name", "disease_group")
     list_filter = ("disease_group",)
-    search_fields = ("name", "disease_group__name")
-    ordering = ("disease_group__name", "name")
+    search_fields = ("icd10_code", "name", "disease_group__icd10_code", "disease_group__name")
+    ordering = ("disease_group__icd10_code", "icd10_code", "name")
 
 
 @admin.register(MolecularPathologyExon)

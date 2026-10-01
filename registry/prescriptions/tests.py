@@ -180,6 +180,52 @@ class DraftSchemaTests(TestCase):
 
 
 class OptionResolutionTests(TestCase):
+    def test_icd10_codes_resolve_diagnosis_group_and_scoped_subgroup(self):
+        group = DiagnosisDiseaseGroup.objects.create(name="Malignant lung neoplasm", icd10_code="C34")
+        subgroup = DiagnosisDiseaseSubgroup.objects.create(
+            disease_group=group,
+            name="Right upper lobe",
+            icd10_code="C34.11",
+        )
+
+        self.assertEqual(
+            (resolve_option("diagnosis-disease-groups", "c34")["status"], resolve_option("diagnosis-disease-groups", "c34")["option_id"]),
+            ("resolved", group.pk),
+        )
+        self.assertEqual(
+            (resolve_option("diagnosis-disease-subgroups", "C3411", filters={"disease_group": group})["status"], resolve_option("diagnosis-disease-subgroups", "C3411", filters={"disease_group": group})["option_id"]),
+            ("resolved", subgroup.pk),
+        )
+
+    def test_gemini_icd10_diagnosis_candidates_flow_into_the_canonical_draft(self):
+        group = DiagnosisDiseaseGroup.objects.create(name="Malignant lung neoplasm", icd10_code="C34")
+        subgroup = DiagnosisDiseaseSubgroup.objects.create(
+            disease_group=group,
+            name="Right upper lobe",
+            icd10_code="C34.11",
+        )
+        evidence = lambda value: {"value": value, "source_text": "Right upper-lobe lung adenocarcinoma", "page": 1, "confidence": 0.95}
+        draft = build_intake_draft({
+            "gemini_extraction": {
+                "patient": {},
+                "observations": [{
+                    "temporal_context": "current",
+                    "diagnoses": [{
+                        "disease_group": evidence("C34"),
+                        "disease_subgroup": evidence("C34.11"),
+                        "diagnosis_in_details": evidence("Right upper-lobe lung adenocarcinoma"),
+                    }],
+                }],
+                "unresolved_items": [],
+                "warnings": [],
+            },
+        }, document_id=99)
+
+        diagnosis = draft["observations"][0]["diagnoses"][0]
+        self.assertEqual(diagnosis["values"]["diagnosis_in_details"], "Right upper-lobe lung adenocarcinoma")
+        self.assertEqual(diagnosis["resolutions"]["disease_group"]["option_id"], group.pk)
+        self.assertEqual(diagnosis["resolutions"]["disease_subgroup"]["option_id"], subgroup.pk)
+
     def test_unique_exact_option_is_resolved_by_server_id(self):
         drug = TreatmentDrug.objects.create(name="Osimertinib")
         result = resolve_option("treatment-drugs", "osimertinib")

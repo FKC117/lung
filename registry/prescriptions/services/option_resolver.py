@@ -78,6 +78,7 @@ OPTION_FIELDS = {
 }
 
 MULTI_OPTION_FIELDS = {("diagnoses", "metastatic_sites"), ("progression_records", "progression_sites")}
+ICD10_CODE_RESOURCES = {"diagnosis-disease-groups", "diagnosis-disease-subgroups"}
 
 # These historical lookup models were deleted by existing options migrations.
 # A draft may retain their extracted text for review, but it cannot claim a
@@ -107,6 +108,11 @@ def normalize(value):
     value = unicodedata.normalize("NFKD", str(value or "")).casefold()
     value = "".join(character for character in value if not unicodedata.combining(character))
     return re.sub(r"[^a-z0-9]+", "", value)
+
+
+def normalize_icd10_code(value):
+    """Compare ICD-10 codes independent of display punctuation (C34.11 == C3411)."""
+    return re.sub(r"[^A-Z0-9]+", "", str(value or "").upper())
 
 
 def _candidate(option, method, score=1.0):
@@ -160,6 +166,17 @@ def resolve_option(resource, value, *, filters=None):
             return _result("resolved", resource, value, option=option, method="approved_alias")
         if len(alias_drugs) > 1:
             return _result("ambiguous", resource, value, candidates=[_candidate(item, "approved_alias") for item in alias_drugs.values()], reason="Multiple approved aliases matched.")
+
+    if resource in ICD10_CODE_RESOURCES:
+        target_code = normalize_icd10_code(name)
+        code_matches = [
+            option for option in options
+            if normalize_icd10_code(getattr(option, "icd10_code", None)) == target_code
+        ]
+        if len(code_matches) == 1:
+            return _result("resolved", resource, value, option=code_matches[0], method="icd10_code")
+        if len(code_matches) > 1:
+            return _result("ambiguous", resource, value, candidates=[_candidate(item, "icd10_code") for item in code_matches], reason="Multiple approved options use this ICD-10 code.")
 
     exact = [option for option in options if hasattr(option, "name") and option.name.casefold() == name.casefold()]
     if len(exact) == 1:
