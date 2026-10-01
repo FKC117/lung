@@ -2,7 +2,27 @@ from django.contrib import admin
 
 from .models import ExtractionIssue, ExtractionRun, LLMInvocation, PrescriptionDocument, PrescriptionDrugAlias, PrescriptionPage, PrescriptionReview, PrescriptionReviewChange
 
-admin.site.register((PrescriptionDocument, PrescriptionPage, ExtractionRun, ExtractionIssue, PrescriptionDrugAlias, PrescriptionReview, PrescriptionReviewChange))
+admin.site.register((PrescriptionPage, ExtractionRun, ExtractionIssue, PrescriptionDrugAlias, PrescriptionReview, PrescriptionReviewChange))
+
+
+@admin.register(PrescriptionDocument)
+class PrescriptionDocumentAdmin(admin.ModelAdmin):
+    """Delete a prescription as one authorized unit, including its audit chain."""
+
+    list_display = ("id", "original_filename", "status", "patient", "uploaded_by", "created_at")
+    list_filter = ("status",)
+    search_fields = ("=id", "original_filename", "sha256", "patient__patient_id", "patient__registration_no")
+    list_select_related = ("patient", "uploaded_by")
+    ordering = ("-created_at",)
+
+    def get_deleted_objects(self, objs, request):
+        deleted_objects, model_count, perms_needed, protected = super().get_deleted_objects(objs, request)
+        # A user authorised to delete the document is authorised to remove its
+        # dependent OCR, extraction, review, and LLM audit rows. Direct LLM
+        # audit deletion remains disabled in LLMInvocationAdmin.
+        if self.has_delete_permission(request):
+            perms_needed.clear()
+        return deleted_objects, model_count, perms_needed, protected
 
 
 @admin.register(LLMInvocation)

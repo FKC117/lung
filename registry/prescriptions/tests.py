@@ -2,9 +2,10 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
+from django.contrib import admin
 from django.core.files.base import ContentFile
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from rest_framework.test import APIClient
 
 from options.models import (
@@ -29,7 +30,8 @@ from options.models import (
 )
 from records.models import ClinicalObservation, Diagnosis, MolecularTest, MolecularTestResult, Patient, PatientAnthropometry
 
-from .models import ExtractionRun, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, RecordProvenance
+from .admin import LLMInvocationAdmin, PrescriptionDocumentAdmin
+from .models import ExtractionRun, LLMInvocation, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, RecordProvenance
 from .services.publish import publish_review
 from records.services.intake import manual_payload_to_draft
 from .services.draft_schema import COLLECTIONS, empty_draft, empty_observation, normalize_extraction, validate_draft
@@ -177,6 +179,31 @@ class DraftSchemaTests(TestCase):
                 "unresolved_items": [],
                 "warnings": [],
             })
+
+
+class PrescriptionDocumentAdminTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_superuser(username="document-admin", password="password", email="admin@example.test")
+        self.document = PrescriptionDocument.objects.create(
+            file="prescriptions/deletable.pdf",
+            original_filename="deletable.pdf",
+            sha256="d" * 64,
+            uploaded_by=self.user,
+        )
+        LLMInvocation.objects.create(document=self.document, provider="gemini", request_kind="generate_content")
+        self.request = RequestFactory().get("/admin/prescriptions/prescriptiondocument/")
+        self.request.user = self.user
+
+    def test_document_delete_allows_its_cascading_llm_audit_row(self):
+        document_admin = PrescriptionDocumentAdmin(PrescriptionDocument, admin.site)
+        _deleted, _model_count, permissions_needed, protected = document_admin.get_deleted_objects([self.document], self.request)
+
+        self.assertNotIn(LLMInvocation._meta.verbose_name, permissions_needed)
+        self.assertFalse(protected)
+
+    def test_llm_audit_row_cannot_be_deleted_directly(self):
+        audit_admin = LLMInvocationAdmin(LLMInvocation, admin.site)
+        self.assertFalse(audit_admin.has_delete_permission(self.request))
 
 
 class OptionResolutionTests(TestCase):
