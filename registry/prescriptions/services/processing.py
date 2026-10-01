@@ -73,7 +73,7 @@ def extract_pages(document):
     raise RuntimeError("Only PDF, image, and plain-text uploads are supported.")
 
 
-def process_document(document, *, retry_invalid_structured_output=False):
+def process_document(document, *, retry_invalid_structured_output=False, quality_recovery=False):
     """Create immutable extraction output and review issues; never touch clinical records."""
     document.status = PrescriptionDocument.Status.PROCESSING
     document.processing_started_at = timezone.now()
@@ -95,6 +95,7 @@ def process_document(document, *, retry_invalid_structured_output=False):
             gemini_data, raw_response, prompt_version, model_name = extract_structured_data(
                 stored_pages,
                 extraction_run=run,
+                quality_recovery=quality_recovery,
             )
             result["gemini_extraction"] = gemini_data
             result["gemini_status"] = "available"

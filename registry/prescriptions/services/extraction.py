@@ -34,46 +34,6 @@ class GeminiStructuredOutputError(ValueError):
     """The provider answered, but did not honour the structured-output contract."""
 
 
-EVIDENCE_VALUE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "value": {"type": "string"},
-        "source_text": {"type": "string"},
-        "page": {"type": "integer"},
-        "confidence": {"type": "number"},
-    },
-    "required": ["value", "source_text", "page", "confidence"],
-}
-
-# The clinical record collections are intentionally open objects because their
-# fields evolve with the registry schema.  The response schema still forces the
-# outer contract, patient evidence leaves, and valid JSON syntax at Gemini.
-EXTRACTION_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "patient": {
-            "type": "object",
-            "properties": {field: EVIDENCE_VALUE_SCHEMA for field in PATIENT_FIELDS},
-        },
-        "observations": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "temporal_context": {
-                        "type": "string",
-                        "enum": ["historical", "current", "planned", "unknown"],
-                    },
-                },
-            },
-        },
-        "unresolved_items": {"type": "array", "items": {"type": "object"}},
-        "warnings": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["patient", "observations", "unresolved_items", "warnings"],
-}
-
-
 def gemini_retry_after_seconds(error):
     """Read a Retry-After header when the provider SDK exposes one."""
     response = getattr(error, "response", None)
@@ -137,6 +97,15 @@ When the source contains a diagnosis, pathology, treatment, radiotherapy, or met
 observations must include the supported clinical records. Do not return a demographics-only
 response for a clinical prescription; if a clinical fact cannot be extracted, describe why in
 unresolved_items."""
+
+QUALITY_RECOVERY_INSTRUCTION = """
+This is a recovery extraction because the previous result was invalid or omitted
+the clinical timeline. Re-read every source page. Do not return demographics
+alone when the document contains clinical facts. Extract every explicitly
+supported diagnosis, pathology, molecular/IHC result, cancer marker, treatment,
+radiotherapy, surgery, progression, or response into observations. Preserve
+uncertain facts in unresolved_items. Return only the required JSON object.
+"""
 
 
 def empty_extraction():
@@ -250,11 +219,13 @@ def _finish_invocation(invocation, *, status, output_text="", error="", response
     ])
 
 
-def extract_structured_data(pages, *, extraction_run=None):
+def extract_structured_data(pages, *, extraction_run=None, quality_recovery=False):
     """Call Gemini and return both immutable raw output and validated review data."""
     page_list = list(pages)
     document_id = getattr(page_list[0], "document_id", None) if page_list else getattr(extraction_run, "document_id", None)
     contents = build_contents(page_list)
+    system_instruction = SYSTEM_INSTRUCTION + (QUALITY_RECOVERY_INSTRUCTION if quality_recovery else "")
+    prompt_version = settings.PRESCRIPTION_EXTRACTION_PROMPT_VERSION + ("-quality-recovery" if quality_recovery else "")
     invocation = None
     if extraction_run:
         invocation = LLMInvocation.objects.create(
@@ -263,8 +234,8 @@ def extract_structured_data(pages, *, extraction_run=None):
             provider="gemini",
             request_kind="generate_content",
             model_name=settings.PRESCRIPTION_EXTRACTION_MODEL,
-            prompt_version=settings.PRESCRIPTION_EXTRACTION_PROMPT_VERSION,
-            system_instruction=SYSTEM_INSTRUCTION,
+            prompt_version=prompt_version,
+            system_instruction=system_instruction,
             input_text=contents,
             input_sha256=_text_hash(contents),
             input_characters=len(contents),
@@ -299,9 +270,8 @@ def extract_structured_data(pages, *, extraction_run=None):
             model=settings.PRESCRIPTION_EXTRACTION_MODEL,
             contents=contents,
             config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
+                system_instruction=system_instruction,
                 response_mime_type="application/json",
-                response_schema=EXTRACTION_RESPONSE_SCHEMA,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 temperature=0,
             ),
@@ -365,4 +335,4 @@ def extract_structured_data(pages, *, extraction_run=None):
         len(raw_response),
         len(validated["observations"]),
     )
-    return validated, raw_response, settings.PRESCRIPTION_EXTRACTION_PROMPT_VERSION, settings.PRESCRIPTION_EXTRACTION_MODEL
+    return validated, raw_response, prompt_version, settings.PRESCRIPTION_EXTRACTION_MODEL

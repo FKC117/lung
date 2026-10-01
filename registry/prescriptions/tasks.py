@@ -44,14 +44,15 @@ def _mark_quota_retries_exhausted(document_id):
     queue=settings.PRESCRIPTION_EXTRACTION_QUEUE,
     rate_limit=settings.PRESCRIPTION_GEMINI_RATE_LIMIT,
 )
-def process_prescription_document(self, document_id):
+def process_prescription_document(self, document_id, quality_recovery=False):
     """Run OCR and Gemini extraction outside the Django request process."""
     logger.info("Prescription extraction started document_id=%s task_id=%s", document_id, self.request.id)
     try:
         document = PrescriptionDocument.objects.get(pk=document_id)
         run = process_document(
             document,
-            retry_invalid_structured_output=self.request.retries < settings.PRESCRIPTION_GEMINI_OUTPUT_MAX_RETRIES,
+            retry_invalid_structured_output=not quality_recovery,
+            quality_recovery=quality_recovery,
         )
     except GeminiRateLimitError as exc:
         retry_countdown = _gemini_retry_countdown(self, exc)
@@ -77,9 +78,8 @@ def process_prescription_document(self, document_id):
             max_retries=settings.PRESCRIPTION_GEMINI_MAX_RETRIES,
         )
     except GeminiStructuredOutputError as exc:
-        # A 200 response can still contain malformed JSON. Retry it briefly;
-        # after the configured attempts process_document preserves OCR evidence
-        # and marks Gemini unavailable for the reviewer.
+        # A structurally bad or demographics-only answer needs a different
+        # prompt, not the same deterministic request again.
         logger.warning(
             "Gemini structured output invalid document_id=%s task_id=%s retry_in_seconds=%s attempt=%s",
             document_id,
@@ -89,6 +89,7 @@ def process_prescription_document(self, document_id):
         )
         raise self.retry(
             exc=exc,
+            args=(document_id, True),
             countdown=settings.PRESCRIPTION_GEMINI_OUTPUT_RETRY_SECONDS,
             max_retries=settings.PRESCRIPTION_GEMINI_OUTPUT_MAX_RETRIES,
         )
