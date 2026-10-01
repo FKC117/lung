@@ -8,3 +8,4 @@ dist/
 scrapper_plan.txt
 registry/media/
 registry/logs/
+celery command

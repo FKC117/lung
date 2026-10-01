@@ -23,26 +23,44 @@ function hasExtractedValue(value: unknown) {
   return Array.isArray(value) ? value.length > 0 : value && typeof value === "object" ? Object.keys(value).length > 0 : value !== null && value !== undefined && value !== "";
 }
 
-function ExtractedValue({ value, depth = 0 }: { value: unknown; depth?: number }) {
-  if (value === null || value === undefined || value === "") return <span className="prescription-empty-value">Not supplied</span>;
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return <span>{String(value)}</span>;
-  if (depth >= 5) return <span>{String(value)}</span>;
-  if (Array.isArray(value)) return <div className="prescription-extracted-list">{value.map((item, index) => <article key={index} className="prescription-extracted-item"><span className="prescription-extracted-item-number">{index + 1}</span><ExtractedValue value={item} depth={depth + 1} /></article>)}</div>;
-  if (typeof value === "object") return <dl className="prescription-extracted-fields">{Object.entries(value as Record<string, unknown>).map(([key, item]) => <div key={key}><dt>{humanize(key)}</dt><dd><ExtractedValue value={item} depth={depth + 1} /></dd></div>)}</dl>;
-  return <span>{String(value)}</span>;
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function GeminiFact({ label, value }: { label: string; value: unknown }) {
+  const fact = record(value);
+  const isEvidence = Boolean(fact && "value" in fact && ("source_text" in fact || "page" in fact || "confidence" in fact));
+  if (fact && isEvidence) return <article className="prescription-gemini-fact"><strong>{label}</strong><span>{String(fact.value ?? "Not supplied")}</span><small>{typeof fact.confidence === "number" ? `${Math.round(fact.confidence * 100)}% confidence` : "Confidence not supplied"}{fact.page ? ` · page ${fact.page}` : ""}</small>{fact.source_text ? <em>{String(fact.source_text)}</em> : null}</article>;
+  if (Array.isArray(value)) return <div className="prescription-gemini-facts">{value.map((item, index) => <GeminiFact key={index} label={`${label} ${value.length > 1 ? index + 1 : ""}`.trim()} value={item} />)}</div>;
+  if (fact) return <section className="prescription-gemini-composite"><h5>{label}</h5>{Object.entries(fact).map(([key, item]) => <GeminiFact key={key} label={humanize(key)} value={item} />)}</section>;
+  return <article className="prescription-gemini-fact"><strong>{label}</strong><span>{value === null || value === undefined || value === "" ? "Not supplied" : String(value)}</span></article>;
+}
+
+function GeminiEvent({ observation, index }: { observation: Record<string, unknown>; index: number }) {
+  const groups = Object.entries(observation).filter(([key, value]) => key !== "temporal_context" && hasExtractedValue(value));
+  return <section className="prescription-gemini-event"><header><span>Event {index + 1}</span><strong>{String(observation.temporal_context ?? "unknown")}</strong></header>{groups.map(([key, value]) => <section className="prescription-gemini-group" key={key}><h5>{humanize(key)}</h5><GeminiFact label={humanize(key)} value={value} /></section>)}</section>;
 }
 
 function ExtractionPreview({ document, onClose, onCorrect }: { document: PrescriptionDocument; onClose: () => void; onCorrect: () => void }) {
   const run = document.extraction_runs[0];
   const extracted = run?.structured_data && typeof run.structured_data === "object" ? run.structured_data as Record<string, unknown> : {};
-  const populatedSections = Object.entries(extracted)
-    .filter(([key, value]) => !internalExtractionKeys.has(key) && hasExtractedValue(value));
+  const gemini = record(extracted.gemini_extraction);
+  const patient = record(gemini?.patient);
+  const observations = Array.isArray(gemini?.observations) ? gemini.observations.map(record).filter((item): item is Record<string, unknown> => Boolean(item)) : [];
+  const warnings = Array.isArray(gemini?.warnings) ? gemini.warnings : [];
+  const unresolved = Array.isArray(gemini?.unresolved_items) ? gemini.unresolved_items : [];
+  const populatedSections = Object.entries(extracted).filter(([key, value]) => !internalExtractionKeys.has(key) && hasExtractedValue(value));
   return <div className="entry-modal-backdrop prescription-preview-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="entry-modal prescription-extraction-preview" role="dialog" aria-modal="true" aria-labelledby="extraction-preview-title" onMouseDown={(event) => event.stopPropagation()}>
       <button className="entry-modal-close" type="button" onClick={onClose} aria-label="Close extracted data">×</button>
-      <p className="eyebrow">Complete extracted data · read only</p><h3 id="extraction-preview-title">{document.original_filename}</h3>
-      <p>Every extracted clinical suggestion is shown below. Nothing here has been saved as a clinical record. Confirm or correct the information in New Entry.</p>
-      {populatedSections.length ? <div className="prescription-preview-sections">{populatedSections.map(([key, value]) => <section key={key} className="prescription-preview-section"><h4>{humanize(key)}</h4><ExtractedValue value={value} /></section>)}</div> : <p className="hero-text">No structured suggestions are available yet. You can retry extraction from the history list.</p>}
+      <p className="eyebrow">Gemini extraction · read only</p><h3 id="extraction-preview-title">{document.original_filename}</h3>
+      <p>Gemini's structured suggestions are grouped by patient and clinical event. They remain evidence only until you confirm or correct them in New Entry.</p>
+      {gemini ? <div className="prescription-gemini-preview">
+        {patient && Object.keys(patient).length ? <section className="prescription-preview-section"><div className="prescription-preview-heading"><div><p className="eyebrow">Patient</p><h4>Patient identity</h4></div></div><div className="prescription-gemini-facts">{Object.entries(patient).map(([key, value]) => <GeminiFact key={key} label={humanize(key)} value={value} />)}</div></section> : null}
+        {observations.length ? <section className="prescription-preview-section"><div className="prescription-preview-heading"><div><p className="eyebrow">Clinical timeline</p><h4>{observations.length} extracted event{observations.length === 1 ? "" : "s"}</h4></div></div><div className="prescription-gemini-events">{observations.map((observation, index) => <GeminiEvent key={index} observation={observation} index={index} />)}</div></section> : null}
+        {warnings.length || unresolved.length ? <section className="prescription-preview-section prescription-gemini-alerts"><h4>Needs review</h4>{warnings.map((item, index) => <p key={`warning-${index}`}>{String(item)}</p>)}{unresolved.map((item, index) => <p key={`unresolved-${index}`}>{record(item)?.reason ? String(record(item)?.reason) : String(item)}</p>)}</section> : null}
+        <details className="prescription-gemini-raw"><summary>View exact Gemini JSON</summary><pre>{JSON.stringify(gemini, null, 2)}</pre></details>
+      </div> : populatedSections.length ? <section className="prescription-preview-section"><h4>Structured Gemini extraction is not available</h4><p className="hero-text">The deterministic extraction is available below. Gemini may be unconfigured or its request may have failed.</p><details className="prescription-gemini-raw"><summary>View deterministic extraction data</summary><pre>{JSON.stringify(Object.fromEntries(populatedSections), null, 2)}</pre></details></section> : <p className="hero-text">No structured suggestions are available yet. You can retry extraction from the history list.</p>}
       <div className="prescription-preview-actions"><button className="secondary-button" type="button" onClick={onClose}>Close</button><button className="primary-button" type="button" onClick={onCorrect}>Correct in New Entry <ArrowRight size={15} /></button></div>
     </section>
   </div>;
