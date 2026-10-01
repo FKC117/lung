@@ -12,12 +12,26 @@ from .serializers import PrescriptionBatchJobSerializer, PrescriptionDocumentSer
 from .services.batch import create_batch_job, sync_batch_job
 from .services.access import prescription_batch_jobs_for_user, prescription_documents_for_user
 from .services.draft_schema import is_canonical_draft
+from .services.extraction import has_clinical_observation, source_has_clinical_signal
 from .services.intake_draft import build_intake_draft
 from .services.publish import publish_review
 from .tasks import process_prescription_document, sync_prescription_batch_job
 
 
 _MISSING = object()
+
+
+def has_gemini_quality_issue(document):
+    """Allow a repair run without ever replacing an in-progress review draft."""
+    latest_run = document.extraction_runs.order_by("-created_at").first()
+    extracted = latest_run.structured_data if latest_run and isinstance(latest_run.structured_data, dict) else {}
+    if extracted.get("gemini_status") == "unavailable":
+        return True
+    gemini = extracted.get("gemini_extraction") if isinstance(extracted.get("gemini_extraction"), dict) else {}
+    unresolved = gemini.get("unresolved_items") if isinstance(gemini.get("unresolved_items"), list) else []
+    if any(isinstance(item, dict) and item.get("type") == "structured_extraction" for item in unresolved):
+        return True
+    return source_has_clinical_signal(document.pages.all()) and not has_clinical_observation(gemini)
 
 
 def json_changes(previous, current, path="reviewed_data"):
@@ -109,8 +123,11 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         document = self.get_object()
         if document.status != PrescriptionDocument.Status.READY_FOR_REVIEW:
             raise ValidationError({"detail": "Only a completed, unreviewed document can be re-run."})
-        if hasattr(document, "review"):
-            raise ValidationError({"detail": "This document has already entered correction. Its reviewed draft will not be overwritten."})
+        review = getattr(document, "review", None)
+        if review and review.published_at:
+            raise ValidationError({"detail": "A published prescription cannot be re-run because its provenance is immutable."})
+        if review and not has_gemini_quality_issue(document):
+            raise ValidationError({"detail": "This document has already entered correction. Re-running a healthy extraction would overwrite its review context."})
         document.status = PrescriptionDocument.Status.PROCESSING
         document.processing_started_at = timezone.now()
         document.save(update_fields=["status", "processing_started_at"])

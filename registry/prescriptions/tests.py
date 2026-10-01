@@ -31,6 +31,7 @@ from options.models import (
 from records.models import ClinicalObservation, Diagnosis, MolecularTest, MolecularTestResult, Patient, PatientAnthropometry
 
 from .admin import LLMInvocationAdmin, PrescriptionDocumentAdmin
+from .api_views import has_gemini_quality_issue
 from .models import ExtractionIssue, ExtractionRun, LLMInvocation, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, RecordProvenance
 from .services.publish import publish_review
 from records.services.intake import manual_payload_to_draft
@@ -259,6 +260,23 @@ class GeminiExtractionQualityGateTests(TestCase):
         }
 
         self.assertTrue(has_clinical_observation(payload))
+
+    def test_existing_review_with_empty_clinical_timeline_is_eligible_for_repair(self):
+        document = PrescriptionDocument.objects.create(
+            file="prescriptions/quality-repair.pdf",
+            original_filename="quality-repair.pdf",
+            sha256="r" * 64,
+            status=PrescriptionDocument.Status.READY_FOR_REVIEW,
+        )
+        PrescriptionPage.objects.create(document=document, page_number=1, raw_text="Diagnosis: carcinoma of right lung")
+        ExtractionRun.objects.create(
+            document=document,
+            status=ExtractionRun.Status.COMPLETED,
+            structured_data={"gemini_extraction": {"patient": {}, "observations": [], "unresolved_items": [], "warnings": []}},
+        )
+        PrescriptionReview.objects.create(document=document)
+
+        self.assertTrue(has_gemini_quality_issue(document))
 
 
 class OptionResolutionTests(TestCase):
