@@ -5,6 +5,16 @@ import { manualFieldKey, type ClinicalFieldDefinition } from "./observationField
 type Catalog = Record<string, EntryOption[]>;
 type Resolution = PrescriptionDraftRecord["resolutions"][string];
 
+function extractedText(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "Not supplied";
+  if (Array.isArray(value)) return value.length ? value.map(extractedText).join(", ") : "Not supplied";
+  if (typeof value === "object") {
+    if ("value" in value) return extractedText(value.value);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
 export interface ClinicalSectionFieldsProps {
   fields: readonly ClinicalFieldDefinition[];
   values: Record<string, unknown>;
@@ -55,15 +65,18 @@ export function ClinicalSectionFields({ fields, values, catalog = {}, resolution
       const valueKey = binding === "manual" ? manualFieldKey(field) : field.key;
       const raw = values[valueKey];
       const resolution = resolutions[field.key];
+      const extracted = binding === "canonical" && field.resource
+        ? <p className="entry-field-help clinical-extracted-value"><strong>Extracted value:</strong> {extractedText(resolution ? resolution.raw_value : raw)}</p>
+        : null;
       if (field.readOnly || field.type === "derived") return <IntakeTextField key={field.key} label={field.label} value={derivedValue(field, values, catalog, binding, resolutions)} onChange={() => undefined} readOnly disabled={disabled} />;
       if ((field.multiple || (binding === "manual" && field.manualMultiple)) && field.resource) {
         const selected = optionIds(raw, resolution);
-        return <label className="filter-field entry-span-full" key={field.key} data-clinical-field={field.key}><span>{field.label}{field.required ? " *" : ""}</span><select multiple className="filter-select entry-multiselect" disabled={disabled} value={selected} onChange={(event) => { const ids = Array.from(event.currentTarget.selectedOptions).map((option) => Number(option.value)); const options = (catalog[field.resource ?? ""] ?? []).filter((option) => ids.includes(option.id)); onChange(field, ids, options); }}>{(catalog[field.resource] ?? []).map((option) => <option key={option.id} value={option.id}>{option.name ?? option.display}</option>)}</select></label>;
+        return <label className="filter-field entry-span-full" key={field.key} data-clinical-field={field.key}><span>{field.label}{field.required ? " *" : ""}</span>{extracted}<select multiple className="filter-select entry-multiselect" disabled={disabled} value={selected} onChange={(event) => { const ids = Array.from(event.currentTarget.selectedOptions).map((option) => Number(option.value)); const options = (catalog[field.resource ?? ""] ?? []).filter((option) => ids.includes(option.id)); onChange(field, ids, options); }}>{(catalog[field.resource] ?? []).map((option) => <option key={option.id} value={option.id}>{option.name ?? option.display}</option>)}</select>{field.resource && !(catalog[field.resource] ?? []).length ? <p className="entry-field-help">No options configured for this field.</p> : null}</label>;
       }
       if (field.resource) {
         const options = catalog[field.resource] ?? [];
         const selected = binding === "canonical" ? resolution?.option_id ?? "" : String(raw ?? "");
-        return <IntakeSelectField key={field.key} label={field.label} required={field.required} disabled={disabled} options={options} value={selected} placeholder={raw && binding === "canonical" ? String(raw) : `Select ${field.label.toLowerCase()}`} onChange={(value, option) => onChange(field, option ? option.id : value, option ? [option] : [])} />;
+        return <IntakeSelectField key={field.key} label={field.label} required={field.required} disabled={disabled} options={options} value={selected} evidence={extracted} help={!options.length ? "No options configured for this field." : undefined} placeholder={`Select ${field.label.toLowerCase()}`} onChange={(value, option) => onChange(field, option ? option.id : value, option ? [option] : [])} />;
       }
       if (field.type === "status" || field.type === "boolean") {
         const choices = field.type === "boolean" ? [{ value: "true", label: "Yes" }, { value: "false", label: "No" }] : field.choices ?? [];

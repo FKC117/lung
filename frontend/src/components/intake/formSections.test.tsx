@@ -67,6 +67,45 @@ describe("shared intake form fields", () => {
     expect(screen.getByTestId("multi-resolution").textContent).toBe("[11,12]");
   });
 
+  it("retains extracted drug text through selection and clearing", async () => {
+    function Harness() {
+      const initial = createBlankRecord("treatments");
+      initial.values.drug = "Tab Tagrisso";
+      const [observation, setObservation] = useState<PrescriptionObservationDraft>({ ...emptyObservation(), treatments: [initial] });
+      return <ObservationFormSections observation={observation} collections={["treatments"]} catalog={{ "treatment-drugs": [{ id: 7, name: "Osimertinib", display: "Osimertinib" }] }} onChange={setObservation} />;
+    }
+    render(<Harness />);
+    const select = screen.getByRole("combobox", { name: /^Drug/ });
+    const field = select.closest("label") as HTMLElement;
+    expect(field.querySelector(".clinical-extracted-value")?.textContent).toContain("Tab Tagrisso");
+    await userEvent.selectOptions(select, "7");
+    expect(field.querySelector(".clinical-extracted-value")?.textContent).toContain("Tab Tagrisso");
+    await userEvent.selectOptions(select, "");
+    expect(field.querySelector(".clinical-extracted-value")?.textContent).toContain("Tab Tagrisso");
+  });
+
+  it("shows extracted values with an empty catalog and with an exact match", () => {
+    const field = observationFieldSchemas.treatments.fields.filter((item) => item.key === "drug");
+    const { rerender } = render(<ClinicalSectionFields fields={field} values={{ drug: "Tagrisso" }} onChange={() => undefined} />);
+    expect(document.querySelector(".clinical-extracted-value")?.textContent).toContain("Tagrisso");
+    expect(screen.getByText("No options configured for this field.")).toBeTruthy();
+    rerender(<ClinicalSectionFields fields={field} values={{ drug: "Tagrisso" }} catalog={{ "treatment-drugs": [{ id: 7, name: "Tagrisso", display: "Tagrisso" }] }} resolutions={{ drug: { status: "resolved", resource: "treatment-drugs", raw_value: "Tagrisso", option_id: 7, match_method: "exact_name", candidates: [], reason: "" } }} onChange={() => undefined} />);
+    expect(document.querySelector(".clinical-extracted-value")?.textContent).toContain("Tagrisso");
+    expect(screen.getByRole("combobox")).toHaveProperty("value", "7");
+  });
+
+  it("binds historical pathology payload keys and shows otherwise hidden facts in the actual entry", () => {
+    const record = createBlankRecord("histopathologies");
+    record.values = { histopathology: "Documented pathology narrative", histology_term: "Small cell carcinoma", specimen_site: "Right lung", grades: ["Grade 3"] };
+    render(<ObservationFormSections observation={{ ...emptyObservation(), histopathologies: [record] }} collections={["histopathologies"]} onChange={() => undefined} />);
+    expect(screen.getByRole("textbox", { name: "Report summary" })).toHaveProperty("value", "Documented pathology narrative");
+    const type = screen.getByRole("combobox", { name: /^Histopathology type/ }).closest("label") as HTMLElement;
+    expect(type.querySelector(".clinical-extracted-value")?.textContent).toContain("Small cell carcinoma");
+    const site = screen.getByRole("combobox", { name: /^Histopathology site/ }).closest("label") as HTMLElement;
+    expect(site.querySelector(".clinical-extracted-value")?.textContent).toContain("Right lung");
+    expect(screen.getByText("Grade 3")).toBeTruthy();
+  });
+
   it("renders all fields when a blank diagnosis is added", async () => {
     function Harness() {
       const [observation, setObservation] = useState<PrescriptionObservationDraft>(emptyObservation());

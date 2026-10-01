@@ -14,6 +14,7 @@ import {
   type PrescriptionReview,
   updatePrescriptionReview,
 } from "../api";
+import { normalizePathologyFormDraft } from "../components/intake/ObservationFormSections";
 import { LongitudinalDraftWorkspace } from "../components/intake/LongitudinalDraftWorkspace";
 import { authoritativeOptionResources } from "../components/intake/observationFieldSchema";
 
@@ -58,7 +59,7 @@ export default function PrescriptionCorrectionPage() {
     if (!draft) return null;
     setError("");
     try {
-      const saved = await saveMutation.mutateAsync(draft);
+      const saved = await saveMutation.mutateAsync(normalizePathologyFormDraft(draft));
       setReview(saved);
       setDraft(saved.reviewed_data);
       setDirty(false);
@@ -72,7 +73,7 @@ export default function PrescriptionCorrectionPage() {
 
   const approve = async () => {
     setError("");
-    if (dirty && !(await save())) return;
+    if ((dirty || (draft && JSON.stringify(normalizePathologyFormDraft(draft)) !== JSON.stringify(draft))) && !(await save())) return;
     try {
       const approved = await approveMutation.mutateAsync();
       setReview(approved);

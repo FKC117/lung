@@ -1,5 +1,5 @@
 import { CheckCircle2, Plus, Trash2 } from "lucide-react";
-import type { EntryOption, PrescriptionDraftRecord, PrescriptionObservationDraft } from "../../api";
+import type { EntryOption, LongitudinalIntakeDraft, PrescriptionDraftRecord, PrescriptionObservationDraft } from "../../api";
 import { observationCollections, type ObservationCollection } from "./draftWorkspace";
 import { anthropometrySectionSchema, createBlankRecord, observationFieldSchemas, recordReady, type ClinicalFieldDefinition } from "./observationFieldSchema";
 import { IntakeTextField } from "./SharedIntakeFields";
@@ -17,6 +17,41 @@ export interface ObservationFormSectionsProps {
   onMoveRecord?: (collection: ObservationCollection, tempId: string, targetId: string) => void;
   moveTargets?: Array<{ id: string; label: string }>;
   collections?: readonly ObservationCollection[];
+}
+
+// Older extraction runs used these equivalent names. Keep their original
+// values in the draft while binding them to the actual entry fields.
+const pathologyAliases: Record<string, string> = {
+  histopathology: "report_summary",
+  finding: "report_summary",
+  histology_term: "histopathology_type",
+  specimen_site: "histopathology_site",
+};
+
+function formValues(collection: ObservationCollection, record: PrescriptionDraftRecord) {
+  const values = { ...record.values };
+  if (collection === "histopathologies") {
+    for (const [source, target] of Object.entries(pathologyAliases)) {
+      if (values[target] === undefined || values[target] === null || values[target] === "") {
+        if (values[source] !== undefined) values[target] = values[source];
+      }
+    }
+  }
+  return values;
+}
+
+export function normalizePathologyFormDraft(draft: LongitudinalIntakeDraft): LongitudinalIntakeDraft {
+  return { ...draft, observations: draft.observations.map((observation) => ({
+    ...observation,
+    histopathologies: observation.histopathologies.map((record) => ({ ...record, values: formValues("histopathologies", record) })),
+  })) };
+}
+
+function factText(value: unknown): string {
+  if (value === null || value === undefined) return "Not supplied";
+  if (Array.isArray(value)) return value.map(factText).join(", ");
+  if (typeof value === "object") return "value" in value ? factText(value.value) : JSON.stringify(value);
+  return String(value);
 }
 
 function scopedOptions(field: ClinicalFieldDefinition, record: PrescriptionDraftRecord, catalog: Catalog) {
@@ -55,15 +90,19 @@ export function ObservationFormSections({ observation, catalog = {}, disabled, s
         {!observation[collection].length ? <p className="hero-text">No {schema.label.toLowerCase()} recorded.</p> : null}
         {observation[collection].map((record, index) => <article className={`intake-record-card intake-record-${record.state}`} key={record.temp_id}>
           <div className="intake-record-heading"><label><input type="checkbox" checked={selectedRecords.has(`${collection}:${record.temp_id}`)} onChange={() => onToggleRecord?.(collection, record.temp_id)} /><strong>{schema.label} {index + 1}</strong></label><span className={`intake-state intake-state-${record.state}`}>{record.state}</span></div>
-          <ClinicalSectionFields fields={schema.fields} values={record.values} resolutions={record.resolutions} catalog={scopedCatalog(record, catalog)} disabled={disabled} onChange={(field, value, options = []) => {
+          <ClinicalSectionFields fields={schema.fields} values={formValues(collection, record)} resolutions={record.resolutions} catalog={scopedCatalog(record, catalog)} disabled={disabled} onChange={(field, value, options = []) => {
             const option = options[0];
             updateRecord(collection, record.temp_id, (current) => {
               const resolutions = { ...current.resolutions };
+              // Keep extraction evidence independent of the reviewer's canonical selection.
+              const extractedValue = current.resolutions[field.key]
+                ? current.resolutions[field.key].raw_value
+                : formValues(collection, current)[field.key];
               if (field.resource) resolutions[field.key] = field.multiple
-                ? { status: options.length || !(value as number[]).length ? "resolved" : "unresolved", resource: field.resource, raw_value: options.map((item) => item.name ?? item.display), option_id: null, option_ids: options.map((item) => item.id), match_method: "reviewer_selected", candidates: [], reason: options.length || !(value as number[]).length ? "" : "Selection required." }
+                ? { status: options.length || !(value as number[]).length ? "resolved" : "unresolved", resource: field.resource, raw_value: extractedValue, option_id: null, option_ids: options.map((item) => item.id), match_method: "reviewer_selected", candidates: [], reason: options.length || !(value as number[]).length ? "" : "Selection required." }
                 : option
-                ? { status: "resolved", resource: field.resource, raw_value: option.name ?? option.display, option_id: option.id, match_method: "reviewer_selected", candidates: [], reason: "" }
-                : { status: "unresolved", resource: field.resource, raw_value: value, option_id: null, match_method: null, candidates: [], reason: "Selection required." };
+                ? { status: "resolved", resource: field.resource, raw_value: extractedValue, option_id: option.id, match_method: "reviewer_selected", candidates: [], reason: "" }
+                : { status: "unresolved", resource: field.resource, raw_value: extractedValue, option_id: null, match_method: null, candidates: [], reason: "Selection required." };
               // Canonical draft values carry validated option IDs.  Display text
               // stays in the resolution/evidence layer and is never mistaken for
               // a persisted clinical value.
@@ -73,7 +112,10 @@ export function ObservationFormSections({ observation, catalog = {}, disabled, s
               return { ...current, state: "edited", values: { ...current.values, [field.key]: canonicalValue }, resolutions };
             });
           }} />
-          <div className="intake-record-actions"><button type="button" className="secondary-button" disabled={disabled || !recordReady(collection, record)} onClick={() => updateRecord(collection, record.temp_id, (current) => ({ ...current, state: "validated" }))}><CheckCircle2 size={15} />Mark validated</button>{moveTargets.length ? <select className="filter-select" disabled={disabled} value="" aria-label="Move record" onChange={(event) => { if (event.target.value) onMoveRecord?.(collection, record.temp_id, event.target.value); }}><option value="">Move to observation…</option>{moveTargets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}</select> : null}<button type="button" className="text-button danger-button" disabled={disabled} onClick={() => removeRecord(collection, record.temp_id)}><Trash2 size={15} />Remove</button></div>
+          {Object.entries(record.values).filter(([key, value]) => !schema.fields.some((field) => field.key === key) && value !== null && value !== undefined && value !== "").length ? <div className="entry-grid" aria-label="Additional extracted facts">
+            {Object.entries(record.values).filter(([key, value]) => !schema.fields.some((field) => field.key === key) && value !== null && value !== undefined && value !== "").map(([key, value]) => <div className="filter-field entry-span-full" key={key}><span>Extracted {key.replaceAll("_", " ")}</span><p className="entry-field-help">{factText(value)}</p></div>)}
+          </div> : null}
+          <div className="intake-record-actions"><button type="button" className="secondary-button" disabled={disabled || !recordReady(collection, { ...record, values: formValues(collection, record) })} onClick={() => updateRecord(collection, record.temp_id, (current) => ({ ...current, state: "validated" }))}><CheckCircle2 size={15} />Mark validated</button>{moveTargets.length ? <select className="filter-select" disabled={disabled} value="" aria-label="Move record" onChange={(event) => { if (event.target.value) onMoveRecord?.(collection, record.temp_id, event.target.value); }}><option value="">Move to observation…</option>{moveTargets.map((target) => <option key={target.id} value={target.id}>{target.label}</option>)}</select> : null}<button type="button" className="text-button danger-button" disabled={disabled} onClick={() => removeRecord(collection, record.temp_id)}><Trash2 size={15} />Remove</button></div>
         </article>)}
       </details>;
     })}

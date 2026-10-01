@@ -48,10 +48,12 @@ export interface IntakeSelectFieldProps {
   help?: string;
   placeholder?: string;
   optionLabel?: (option: EntryOption) => string;
+  evidence?: ReactNode;
 }
 
-export function IntakeSelectField({ label, value, options, onChange, required, disabled, help, placeholder = "Select…", optionLabel = (option) => option.name ?? option.display }: IntakeSelectFieldProps) {
+export function IntakeSelectField({ label, value, options, onChange, required, disabled, help, evidence, placeholder = "Select…", optionLabel = (option) => option.name ?? option.display }: IntakeSelectFieldProps) {
   return <FieldShell label={label} required={required} help={help} kind="select-field">
+    {evidence}
     <select className="filter-select" value={value} required={required} disabled={disabled} onChange={(event) => onChange(event.target.value, options.find((option) => String(option.id) === event.target.value))}>
       <option value="">{placeholder}</option>
       {options.map((option) => <option key={option.id} value={option.id}>{optionLabel(option)}</option>)}

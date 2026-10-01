@@ -79,6 +79,14 @@ gender, patient_identifier, registration_no, and phone. Each populated patient k
 the same value/source_text/page/confidence evidence object. Leave a patient key absent when
 the document does not support it.
 
+For every histopathologies record, use the actual form field names:
+biopsy_date, report_date, histopathology_details, histopathology_type,
+histopathology_site, histopathology_grade, report_summary, and any_known_mutation.
+Put the full documented pathology narrative in report_summary. Use the controlled
+field names only for explicitly documented details, type, specimen site, and grade.
+Do not use generic histopathology, finding, histology_term, or specimen_site keys.
+Do not infer a type, site, grade, or date from an ambiguous narrative.
+
 For every diagnoses record, preserve the source wording in diagnosis_in_details. You may also
 provide disease_group as an ICD-10 category-code candidate (for example C34) when the wording
 supports that category. Provide disease_subgroup only as a more-specific ICD-10 code candidate
