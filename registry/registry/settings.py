@@ -151,6 +151,16 @@ TESSERACT_LANGUAGES = os.getenv("TESSERACT_LANGUAGES", "eng")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip()
 PRESCRIPTION_EXTRACTION_MODEL = os.getenv("PRESCRIPTION_EXTRACTION_MODEL", "").strip()
 PRESCRIPTION_EXTRACTION_PROMPT_VERSION = os.getenv("PRESCRIPTION_EXTRACTION_PROMPT_VERSION", "2.0").strip()
+# Gemini quotas are account-specific.  Prescription extraction is therefore
+# deliberately isolated from general Celery work and paced conservatively by
+# default.  Deployments can tune these values from their AI Studio quota.
+PRESCRIPTION_EXTRACTION_QUEUE = os.getenv("PRESCRIPTION_EXTRACTION_QUEUE", "prescription_extraction").strip()
+PRESCRIPTION_GEMINI_RATE_LIMIT = os.getenv("PRESCRIPTION_GEMINI_RATE_LIMIT", "1/m").strip()
+PRESCRIPTION_GEMINI_MAX_RETRIES = int(os.getenv("PRESCRIPTION_GEMINI_MAX_RETRIES", "5"))
+PRESCRIPTION_GEMINI_RETRY_BASE_SECONDS = int(os.getenv("PRESCRIPTION_GEMINI_RETRY_BASE_SECONDS", "60"))
+PRESCRIPTION_GEMINI_RETRY_MAX_SECONDS = int(os.getenv("PRESCRIPTION_GEMINI_RETRY_MAX_SECONDS", "900"))
+PRESCRIPTION_GEMINI_OUTPUT_MAX_RETRIES = int(os.getenv("PRESCRIPTION_GEMINI_OUTPUT_MAX_RETRIES", "2"))
+PRESCRIPTION_GEMINI_OUTPUT_RETRY_SECONDS = int(os.getenv("PRESCRIPTION_GEMINI_OUTPUT_RETRY_SECONDS", "15"))
 # Leave blank until the clinic explicitly confirms how ambiguous numeric dates are written.
 PRESCRIPTION_DATE_ORDER = os.getenv("PRESCRIPTION_DATE_ORDER", "").strip().upper()
 
@@ -165,6 +175,9 @@ CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "900"))
 CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "840"))
+# Avoid reserving a backlog of patient documents in one worker process.  This
+# matters when a dedicated extraction worker is restarted or rate-limited.
+CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv("CELERY_WORKER_PREFETCH_MULTIPLIER", "1"))
 # Keep the worker's Celery loggers under the explicit celery logger below;
 # otherwise Celery replaces the root configuration when a worker starts.
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False

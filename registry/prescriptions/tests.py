@@ -31,14 +31,15 @@ from options.models import (
 from records.models import ClinicalObservation, Diagnosis, MolecularTest, MolecularTestResult, Patient, PatientAnthropometry
 
 from .admin import LLMInvocationAdmin, PrescriptionDocumentAdmin
-from .models import ExtractionRun, LLMInvocation, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, RecordProvenance
+from .models import ExtractionIssue, ExtractionRun, LLMInvocation, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, RecordProvenance
 from .services.publish import publish_review
 from records.services.intake import manual_payload_to_draft
 from .services.draft_schema import COLLECTIONS, empty_draft, empty_observation, normalize_extraction, validate_draft
-from .services.extraction import validate_extraction
+from .services.extraction import GeminiRateLimitError, gemini_retry_after_seconds, has_clinical_observation, is_gemini_rate_limit, source_has_clinical_signal, validate_extraction
 from .services.intake_draft import build_intake_draft
 from .services.option_resolver import resolve_option, validate_approval_readiness, validate_selected_resolutions
 from .services.text_analysis import find_explicit_entities
+from .tasks import _gemini_retry_countdown, _mark_quota_retries_exhausted
 
 
 class PatientIdentifierExtractionTests(TestCase):
@@ -204,6 +205,60 @@ class PrescriptionDocumentAdminTests(TestCase):
     def test_llm_audit_row_cannot_be_deleted_directly(self):
         audit_admin = LLMInvocationAdmin(LLMInvocation, admin.site)
         self.assertFalse(audit_admin.has_delete_permission(self.request))
+
+
+class GeminiQuotaControlTests(TestCase):
+    def setUp(self):
+        self.document = PrescriptionDocument.objects.create(
+            file="prescriptions/quota.pdf",
+            original_filename="quota.pdf",
+            sha256="q" * 64,
+            status=PrescriptionDocument.Status.PROCESSING,
+        )
+
+    def test_http_429_is_recognized_without_relying_on_sdk_exception_type(self):
+        error = SimpleNamespace(code=429, status_code=None, response=None)
+        self.assertTrue(is_gemini_rate_limit(error))
+
+    def test_retry_after_header_is_used_when_available(self):
+        error = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "120"}))
+        self.assertEqual(gemini_retry_after_seconds(error), 120)
+
+    def test_retry_countdown_uses_exponential_backoff_and_honours_provider_hint(self):
+        task = SimpleNamespace(request=SimpleNamespace(retries=2))
+        self.assertEqual(_gemini_retry_countdown(task, GeminiRateLimitError()), 240)
+        self.assertEqual(_gemini_retry_countdown(task, GeminiRateLimitError(retry_after_seconds=20)), 20)
+
+    def test_exhausted_quota_retries_mark_document_failed_with_actionable_issue(self):
+        _mark_quota_retries_exhausted(self.document.pk)
+
+        self.document.refresh_from_db()
+        self.assertEqual(self.document.status, PrescriptionDocument.Status.FAILED)
+        self.assertTrue(ExtractionIssue.objects.filter(document=self.document, code="gemini_rate_limit").exists())
+
+
+class GeminiExtractionQualityGateTests(TestCase):
+    def test_clinical_pdf_cannot_be_accepted_as_demographics_only(self):
+        pages = [SimpleNamespace(cleaned_text="Diagnosis: carcinoma of right lung", raw_text="")]
+        payload = {
+            "patient": {"name": {"value": "Example", "source_text": "Name: Example", "page": 1, "confidence": 1}},
+            "observations": [],
+            "unresolved_items": [],
+            "warnings": [],
+        }
+
+        self.assertTrue(source_has_clinical_signal(pages))
+        self.assertFalse(has_clinical_observation(payload))
+
+    def test_nonempty_clinical_record_satisfies_the_quality_gate(self):
+        payload = {
+            "patient": {},
+            "observations": [{"temporal_context": "current", "diagnoses": [{"diagnosis_in_details": {"value": "Lung carcinoma"}}]}],
+            "unresolved_items": [],
+            "warnings": [],
+        }
+
+        self.assertTrue(has_clinical_observation(payload))
 
 
 class OptionResolutionTests(TestCase):

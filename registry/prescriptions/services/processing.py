@@ -7,7 +7,7 @@ from django.core.files.base import ContentFile
 from django.utils import timezone
 
 from prescriptions.models import ExtractionIssue, ExtractionRun, PrescriptionDocument, PrescriptionPage
-from prescriptions.services.extraction import extract_structured_data
+from prescriptions.services.extraction import GeminiRateLimitError, GeminiStructuredOutputError, extract_structured_data
 from prescriptions.services.intake_draft import build_intake_draft
 from prescriptions.services.text_analysis import analyze_text
 
@@ -73,7 +73,7 @@ def extract_pages(document):
     raise RuntimeError("Only PDF, image, and plain-text uploads are supported.")
 
 
-def process_document(document):
+def process_document(document, *, retry_invalid_structured_output=False):
     """Create immutable extraction output and review issues; never touch clinical records."""
     document.status = PrescriptionDocument.Status.PROCESSING
     document.processing_started_at = timezone.now()
@@ -97,13 +97,25 @@ def process_document(document):
                 extraction_run=run,
             )
             result["gemini_extraction"] = gemini_data
+            result["gemini_status"] = "available"
             if gemini_data.get("warnings"):
                 result["warnings"].extend(str(warning) for warning in gemini_data["warnings"])
             run.raw_response = raw_response
             run.prompt_version = prompt_version
             run.ai_model = model_name
+        except GeminiStructuredOutputError as exc:
+            if retry_invalid_structured_output:
+                raise
+            reason = str(exc)
+            result["gemini_extraction"] = {"unresolved_items": [{"type": "structured_extraction", "reason": reason}]}
+            result["gemini_status"] = "unavailable"
+            result["gemini_error"] = f"{reason} Deterministic OCR evidence is available for review."
+            result["warnings"].append(result["gemini_error"])
+            run.prompt_version = "deterministic-text-v1"
         except Exception as exc:
             result["gemini_extraction"] = {"unresolved_items": [{"type": "structured_extraction", "reason": str(exc)}]}
+            result["gemini_status"] = "unavailable"
+            result["gemini_error"] = "Gemini enrichment failed. Deterministic OCR evidence is available for review."
             result["warnings"].append("Gemini enrichment failed; deterministic extraction is available for review.")
             run.prompt_version = "deterministic-text-v1"
         result["canonical_draft"] = build_intake_draft(
@@ -130,6 +142,24 @@ def process_document(document):
         document.status = PrescriptionDocument.Status.READY_FOR_REVIEW
         document.processed_at = timezone.now()
         document.save(update_fields=["page_count", "status", "processed_at"])
+    except GeminiRateLimitError as exc:
+        # Keep the document in processing while Celery schedules its next
+        # quota-aware attempt.  Marking it failed here would let a user launch
+        # another extraction while the scheduled retry is still pending.
+        run.status = ExtractionRun.Status.FAILED
+        run.error = str(exc)
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "error", "completed_at"])
+        raise
+    except GeminiStructuredOutputError as exc:
+        # The task will make its short retry before retaining the deterministic
+        # extraction.  Keep this document unavailable for manual re-queueing
+        # while that retry is pending.
+        run.status = ExtractionRun.Status.FAILED
+        run.error = str(exc)
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "error", "completed_at"])
+        raise
     except Exception as exc:
         run.status = ExtractionRun.Status.FAILED
         run.error = str(exc)

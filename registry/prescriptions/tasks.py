@@ -1,22 +1,97 @@
 import logging
 
 from celery import shared_task
+from django.conf import settings
+from django.utils import timezone
 
-from prescriptions.models import PrescriptionBatchJob, PrescriptionDocument
+from prescriptions.models import ExtractionIssue, PrescriptionBatchJob, PrescriptionDocument
 from prescriptions.services.batch import sync_batch_job
+from prescriptions.services.extraction import GeminiRateLimitError, GeminiStructuredOutputError
 from prescriptions.services.processing import process_document
 
 
 logger = logging.getLogger("celery.tasks")
 
 
-@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 3})
+def _gemini_retry_countdown(task, error):
+    if error.retry_after_seconds:
+        return min(error.retry_after_seconds, settings.PRESCRIPTION_GEMINI_RETRY_MAX_SECONDS)
+    return min(
+        settings.PRESCRIPTION_GEMINI_RETRY_BASE_SECONDS * (2 ** task.request.retries),
+        settings.PRESCRIPTION_GEMINI_RETRY_MAX_SECONDS,
+    )
+
+
+def _mark_quota_retries_exhausted(document_id):
+    document = PrescriptionDocument.objects.get(pk=document_id)
+    document.status = PrescriptionDocument.Status.FAILED
+    document.processed_at = timezone.now()
+    document.save(update_fields=["status", "processed_at"])
+    ExtractionIssue.objects.create(
+        document=document,
+        code="gemini_rate_limit",
+        severity=ExtractionIssue.Severity.ERROR,
+        message="Gemini quota remained exhausted after all scheduled retries. Retry this document after quota is available.",
+    )
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    dont_autoretry_for=(GeminiRateLimitError, GeminiStructuredOutputError),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 3},
+    queue=settings.PRESCRIPTION_EXTRACTION_QUEUE,
+    rate_limit=settings.PRESCRIPTION_GEMINI_RATE_LIMIT,
+)
 def process_prescription_document(self, document_id):
     """Run OCR and Gemini extraction outside the Django request process."""
     logger.info("Prescription extraction started document_id=%s task_id=%s", document_id, self.request.id)
     try:
         document = PrescriptionDocument.objects.get(pk=document_id)
-        run = process_document(document)
+        run = process_document(
+            document,
+            retry_invalid_structured_output=self.request.retries < settings.PRESCRIPTION_GEMINI_OUTPUT_MAX_RETRIES,
+        )
+    except GeminiRateLimitError as exc:
+        retry_countdown = _gemini_retry_countdown(self, exc)
+        if self.request.retries >= settings.PRESCRIPTION_GEMINI_MAX_RETRIES:
+            _mark_quota_retries_exhausted(document_id)
+            logger.error(
+                "Gemini quota retries exhausted document_id=%s task_id=%s attempts=%s",
+                document_id,
+                self.request.id,
+                self.request.retries + 1,
+            )
+            raise
+        logger.warning(
+            "Gemini quota reached document_id=%s task_id=%s retry_in_seconds=%s attempt=%s",
+            document_id,
+            self.request.id,
+            retry_countdown,
+            self.request.retries + 1,
+        )
+        raise self.retry(
+            exc=exc,
+            countdown=retry_countdown,
+            max_retries=settings.PRESCRIPTION_GEMINI_MAX_RETRIES,
+        )
+    except GeminiStructuredOutputError as exc:
+        # A 200 response can still contain malformed JSON. Retry it briefly;
+        # after the configured attempts process_document preserves OCR evidence
+        # and marks Gemini unavailable for the reviewer.
+        logger.warning(
+            "Gemini structured output invalid document_id=%s task_id=%s retry_in_seconds=%s attempt=%s",
+            document_id,
+            self.request.id,
+            settings.PRESCRIPTION_GEMINI_OUTPUT_RETRY_SECONDS,
+            self.request.retries + 1,
+        )
+        raise self.retry(
+            exc=exc,
+            countdown=settings.PRESCRIPTION_GEMINI_OUTPUT_RETRY_SECONDS,
+            max_retries=settings.PRESCRIPTION_GEMINI_OUTPUT_MAX_RETRIES,
+        )
     except Exception:
         logger.exception("Prescription extraction failed document_id=%s task_id=%s", document_id, self.request.id)
         raise

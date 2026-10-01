@@ -48,3 +48,29 @@ objects and short-lived URLs issued only after the API authorization check.
 The Django URL denial remains as defense in depth for development and any
 deployment that routes media requests through Django. It does not replace the
 Nginx or Apache rule.
+
+## Gemini free-tier extraction worker
+
+Prescription extraction has its own Celery queue, `prescription_extraction`.
+Run exactly one worker for that queue while the project uses Gemini's free tier:
+
+```powershell
+python.exe -m celery -A registry worker --loglevel=INFO --pool=solo --concurrency=1 --queues=prescription_extraction --hostname=prescription-extraction@%h
+```
+
+This makes uploads wait in Redis and processes a single prescription at a time.
+The task is additionally rate-limited by `PRESCRIPTION_GEMINI_RATE_LIMIT`
+(default `1/m`) and retries Gemini `429 RESOURCE_EXHAUSTED` responses with
+bounded exponential backoff. Do not run a second worker consuming this queue
+unless you have deliberately raised the configured Gemini capacity.
+
+Run a separate general worker for non-extraction Celery tasks, such as Gemini
+batch-job polling:
+
+```powershell
+python.exe -m celery -A registry worker --loglevel=INFO --pool=solo --concurrency=1 --queues=celery --hostname=registry-general@%h
+```
+
+The queue name, rate limit, retry count, and backoff are environment settings.
+Set them according to the active limits shown for this project in Google AI
+Studio; do not hard-code a provider quota into application code.

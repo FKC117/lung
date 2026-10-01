@@ -1,6 +1,7 @@
 """LLM extraction with a deliberately narrow, review-only output contract."""
 import json
 import logging
+import re
 from hashlib import sha256
 
 from django.conf import settings
@@ -15,6 +16,86 @@ logger = logging.getLogger("celery.tasks")
 SCHEMA_VERSION = "1"
 
 PATIENT_FIELDS = {"name", "age", "gender", "patient_identifier", "registration_no", "phone"}
+CLINICAL_SOURCE_SIGNAL = re.compile(
+    r"\b(diagnosis|carcinoma|adenocarcinoma|small cell|histopathology|chemotherapy|radiotherapy|metasta(?:sis|tic)|treatment)\b",
+    re.IGNORECASE,
+)
+
+
+class GeminiRateLimitError(RuntimeError):
+    """A provider quota response that must be retried by the Celery task."""
+
+    def __init__(self, *, retry_after_seconds=None):
+        super().__init__("Gemini quota is temporarily exhausted.")
+        self.retry_after_seconds = retry_after_seconds
+
+
+class GeminiStructuredOutputError(ValueError):
+    """The provider answered, but did not honour the structured-output contract."""
+
+
+EVIDENCE_VALUE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "value": {"type": "string"},
+        "source_text": {"type": "string"},
+        "page": {"type": "integer"},
+        "confidence": {"type": "number"},
+    },
+    "required": ["value", "source_text", "page", "confidence"],
+}
+
+# The clinical record collections are intentionally open objects because their
+# fields evolve with the registry schema.  The response schema still forces the
+# outer contract, patient evidence leaves, and valid JSON syntax at Gemini.
+EXTRACTION_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "patient": {
+            "type": "object",
+            "properties": {field: EVIDENCE_VALUE_SCHEMA for field in PATIENT_FIELDS},
+        },
+        "observations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "temporal_context": {
+                        "type": "string",
+                        "enum": ["historical", "current", "planned", "unknown"],
+                    },
+                },
+            },
+        },
+        "unresolved_items": {"type": "array", "items": {"type": "object"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["patient", "observations", "unresolved_items", "warnings"],
+}
+
+
+def gemini_retry_after_seconds(error):
+    """Read a Retry-After header when the provider SDK exposes one."""
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    value = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds > 0 else None
+
+
+def is_gemini_rate_limit(error):
+    """Handle the stable HTTP code and SDK variations without SDK internals."""
+    codes = (
+        getattr(error, "code", None),
+        getattr(error, "status_code", None),
+        getattr(getattr(error, "response", None), "status_code", None),
+    )
+    return 429 in codes or "RESOURCE_EXHAUSTED" in str(error).upper()
 
 SYSTEM_INSTRUCTION = """You extract facts from oncology prescriptions for a human review queue.
 Return JSON only. Never diagnose from medicine names, infer negative results, infer a death,
@@ -50,7 +131,12 @@ explicitly belongs to the patient (for example HN, HN ID, MRN, UHID, Patient ID,
 Number). A doctor's BMDC registration, medical-council registration, licence, or any number
 next to Dr/Doctor/Consultant is never a patient identifier. If both HN and a clinician's
 registration number occur, extract the HN only; do not put the clinician number in patient.
-If the label is unclear, leave the patient identifier absent and add an unresolved item."""
+If the label is unclear, leave the patient identifier absent and add an unresolved item.
+
+When the source contains a diagnosis, pathology, treatment, radiotherapy, or metastasis,
+observations must include the supported clinical records. Do not return a demographics-only
+response for a clinical prescription; if a clinical fact cannot be extracted, describe why in
+unresolved_items."""
 
 
 def empty_extraction():
@@ -62,6 +148,19 @@ def build_contents(pages):
     for page in pages:
         parts.append(f"--- PAGE {page.page_number} ---\n{page.cleaned_text or page.raw_text}")
     return "\n\n".join(parts)
+
+
+def has_clinical_observation(data):
+    """A clinical prescription must not be accepted as demographics-only JSON."""
+    return any(
+        any(key != "temporal_context" and bool(value) for key, value in observation.items())
+        for observation in data.get("observations", [])
+        if isinstance(observation, dict)
+    )
+
+
+def source_has_clinical_signal(pages):
+    return any(CLINICAL_SOURCE_SIGNAL.search(page.cleaned_text or page.raw_text or "") for page in pages)
 
 
 def validate_extraction(data):
@@ -202,10 +301,12 @@ def extract_structured_data(pages, *, extraction_run=None):
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
                 response_mime_type="application/json",
+                response_schema=EXTRACTION_RESPONSE_SCHEMA,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 temperature=0,
             ),
         )
-    except Exception:
+    except Exception as exc:
         # Do not log prompt content, response content, credentials, or patient
         # data.  The exception trace and identifiers are enough to diagnose a
         # provider outage or configuration problem.
@@ -216,6 +317,8 @@ def extract_structured_data(pages, *, extraction_run=None):
             settings.PRESCRIPTION_EXTRACTION_MODEL,
         )
         _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, error="Gemini provider request failed; see Celery log for traceback.")
+        if is_gemini_rate_limit(exc):
+            raise GeminiRateLimitError(retry_after_seconds=gemini_retry_after_seconds(exc)) from exc
         raise
     raw_response = response.text or ""
     if not raw_response:
@@ -226,7 +329,7 @@ def extract_structured_data(pages, *, extraction_run=None):
             settings.PRESCRIPTION_EXTRACTION_MODEL,
         )
         _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, response=response, error="Gemini returned an empty response.")
-        raise ValueError("The extractor returned an empty response.")
+        raise GeminiStructuredOutputError("Gemini returned an empty structured response.")
     try:
         data = json.loads(raw_response)
     except json.JSONDecodeError as exc:
@@ -238,12 +341,21 @@ def extract_structured_data(pages, *, extraction_run=None):
             len(raw_response),
         )
         _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, output_text=raw_response, response=response, error="Gemini returned invalid JSON.")
-        raise ValueError("The extractor returned invalid JSON.") from exc
+        raise GeminiStructuredOutputError("Gemini returned invalid structured JSON.") from exc
     try:
         validated = validate_extraction(data)
     except Exception as exc:
         _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, output_text=raw_response, response=response, error=str(exc))
-        raise
+        raise GeminiStructuredOutputError("Gemini returned JSON that did not match the extraction contract.") from exc
+    if source_has_clinical_signal(page_list) and not has_clinical_observation(validated):
+        _finish_invocation(
+            invocation,
+            status=LLMInvocation.Status.FAILED,
+            output_text=raw_response,
+            response=response,
+            error="Gemini returned no clinical observations for a clinical prescription.",
+        )
+        raise GeminiStructuredOutputError("Gemini returned no clinical observations for a clinical prescription.")
     _finish_invocation(invocation, status=LLMInvocation.Status.SUCCEEDED, output_text=raw_response, response=response)
     logger.info(
         "Gemini extraction request completed document_id=%s pages=%s model=%s response_characters=%s observations=%s",
