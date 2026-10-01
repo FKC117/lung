@@ -3,6 +3,7 @@ from rest_framework import mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from django.db import transaction
 from django.utils import timezone
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from rest_framework.exceptions import MethodNotAllowed, NotFound, ValidationError
 from rest_framework.response import Response
 
@@ -66,6 +67,7 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(document).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"], url_path="source-file")
+    @xframe_options_sameorigin
     def source_file(self, request, pk=None):
         document = self.get_object()
         if not document.file:
@@ -122,6 +124,8 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         return Response({**self.get_serializer(document).data, "task_id": task.id}, status=status.HTTP_202_ACCEPTED)
 
     def _start_review(self, document, user):
+        if document.status != PrescriptionDocument.Status.READY_FOR_REVIEW:
+            raise ValidationError({"detail": "Only a completed document can enter prescription review."})
         latest_run = document.extraction_runs.filter(status="completed").first()
         review, _ = PrescriptionReview.objects.get_or_create(document=document)
         if not review.reviewed_data or not is_canonical_draft(review.reviewed_data):

@@ -27,15 +27,12 @@ import {
   type EntriesPatientClinicalDetail,
   type EntriesIntakePayload,
   type EntryOption,
-  type LongitudinalIntakeDraft,
-  type PrescriptionObservationDraft,
   createEntriesIntake,
   fetchEntriesDraft,
   fetchEntriesPatient,
   fetchEntriesPatientClinicalDetail,
   fetchEntriesOptions,
   fetchEntriesPatients,
-  fetchPrescriptionEntryDraft,
   lookupEntriesPatient,
   saveEntriesDraft,
 } from "../api";
@@ -1083,88 +1080,16 @@ function PublishedObservationHistory({
   );
 }
 
-const prescriptionSuggestionSections: Record<number, { title: string; description: string; fields: Array<[string, string]> }> = {
-  0: {
-    title: "Prescription evidence · patient profile and history",
-    description: "Read-only extraction from the prescription. Confirm identity and select registry values yourself.",
-    fields: [["patient", "Patient identifiers"], ["prescriber_candidates", "Prescriber"], ["date_candidates", "Document dates"], ["form_field_candidates", "Profile and history candidates"], ["gemini_extraction", "Gemini cross-check"]],
-  },
-  2: {
-    title: "Prescription evidence · diagnosis and pathology",
-    description: "Read-only clinical suggestions. Select only supported controlled values in the form below.",
-    fields: [["diagnosis_candidates", "Diagnosis"], ["staging_candidates", "TNM staging"], ["histopathology_candidates", "Histopathology"], ["ihc_candidates", "IHC"], ["molecular_candidates", "Molecular pathology"], ["cancer_marker_candidates", "Cancer markers"], ["gemini_extraction", "Gemini cross-check"]],
-  },
-  3: {
-    title: "Prescription evidence · treatment and outcomes",
-    description: "Read-only prescription evidence. A prescription does not prove administration, response, or outcome—confirm each record before saving.",
-    fields: [["medications", "Medication orders"], ["treatment_candidates", "Treatment plans"], ["administration_candidates", "Administration evidence"], ["surgery_candidates", "Surgery"], ["radiotherapy_candidates", "Radiotherapy"], ["response_candidates", "Response"], ["progression_candidates", "Progression"], ["survival_candidates", "Survival follow-up"], ["gemini_extraction", "Gemini cross-check"]],
-  },
-};
-
-function PrescriptionEvidenceValue({ value }: { value: unknown }) {
-  if (Array.isArray(value)) {
-    if (!value.length) return <p className="entry-field-help">No extracted suggestions.</p>;
-    return <div className="prescription-evidence-list">{value.map((item, index) => <article className="prescription-candidate-card" key={index}><PrescriptionEvidenceValue value={item} /></article>)}</div>;
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if ("value" in record) return <div className="prescription-evidence-field"><strong>{String(record.value ?? "—")}</strong><small>{typeof record.confidence === "number" ? `${Math.round(record.confidence * 100)}% confidence` : "Confidence not supplied"}{record.page ? ` · page ${record.page}` : ""}</small>{record.source_text ? <em>{String(record.source_text)}</em> : null}</div>;
-    return <dl className="prescription-evidence-summary">{Object.entries(record).filter(([key]) => !["source_text", "page", "confidence", "start", "end"].includes(key)).map(([key, item]) => <div key={key}><dt>{key.replaceAll("_", " ")}</dt><dd><PrescriptionEvidenceValue value={item} /></dd></div>)}</dl>;
-  }
-  return <span>{value === null || value === undefined || value === "" ? "—" : String(value)}</span>;
-}
-
-function PrescriptionEvidencePanel({ activeStep, reviewedData }: { activeStep: number; reviewedData: Record<string, unknown> | undefined }) {
-  const section = prescriptionSuggestionSections[activeStep];
-  if (!section || !reviewedData) return null;
-  const relevant = section.fields.filter(([key]) => {
-    const value = reviewedData[key];
-    return Array.isArray(value) ? value.length > 0 : Boolean(value && typeof value === "object" && Object.keys(value as object).length);
-  });
-  if (!relevant.length) return null;
-  return <section className="panel entry-block prescription-entry-evidence" aria-label="Read-only prescription evidence"><div className="panel-heading"><div><p className="eyebrow">Prescription review · read only</p><h3>{section.title}</h3><p className="hero-text">{section.description}</p></div><span className="data-pill">Source suggestions</span></div><div className="prescription-entry-evidence-grid">{relevant.map(([key, label]) => <section key={key} className="prescription-review-group"><h4>{label}</h4><PrescriptionEvidenceValue value={reviewedData[key]} /></section>)}</div></section>;
-}
-
-function draftText(value: unknown) {
-  return value === null || value === undefined ? "" : String(value).trim();
-}
-
-function draftRecords(observation: PrescriptionObservationDraft, collection: keyof PrescriptionObservationDraft) {
-  const records = observation[collection];
-  return Array.isArray(records) ? records.filter((record): record is { values: Record<string, unknown>; resolutions: Record<string, unknown> } => Boolean(record && typeof record === "object" && "values" in record && "resolutions" in record)) : [];
-}
-
-function prescriptionEventLabel(observation: PrescriptionObservationDraft, index: number) {
-  const date = observation.observed_at || observation.prescription_date;
-  const itemCount = ["diagnoses", "histopathologies", "cancer_markers", "treatments", "radiotherapies"].reduce((count, collection) => count + draftRecords(observation, collection as keyof PrescriptionObservationDraft).length, 0);
-  return `Event ${index + 1} · ${observation.temporal_context}${date ? ` · ${date}` : ""}${itemCount ? ` · ${itemCount} suggestions` : ""}`;
-}
-
-function controlledSuggestions(observation: PrescriptionObservationDraft) {
-  const collections = ["comorbidities", "diagnoses", "histopathologies", "ihc_results", "molecular_tests", "cancer_markers", "treatments", "surgeries", "radiotherapies", "progression_records", "survival_records"] as const;
-  return collections.flatMap((collection) => draftRecords(observation, collection).flatMap((record) => Object.entries(record.resolutions).map(([field, resolution]) => {
-    const item = resolution as { raw_value?: unknown; status?: unknown };
-    return item.raw_value ? `${humanize(collection)} · ${humanize(field)}: ${draftText(item.raw_value)}` : null;
-  }).filter((item): item is string => Boolean(item))));
-}
-
-function PrescriptionImportPanel({ draft, eventIndex, onEventChange, onApply, applied }: { draft: LongitudinalIntakeDraft; eventIndex: number; onEventChange: (index: number) => void; onApply: () => void; applied: boolean }) {
-  const observation = draft.observations[eventIndex];
-  if (!observation) return null;
-  const choices = controlledSuggestions(observation);
-  return <section className="panel entry-block prescription-import-panel" aria-label="Prescription suggestions">
-    <div className="panel-heading"><div><p className="eyebrow">Prescription suggestions</p><h3>Load compatible extracted values</h3><p className="hero-text">This keeps the existing form intact. Only empty text and date fields are loaded; every Options-model dropdown remains for your selection.</p></div><span className="data-pill">Review required</span></div>
-    <div className="prescription-import-controls"><label><span>Clinical event to review</span><select value={eventIndex} onChange={(event) => onEventChange(Number(event.target.value))}>{draft.observations.map((item, index) => <option key={item.temp_id} value={index}>{prescriptionEventLabel(item, index)}</option>)}</select></label><button type="button" className="secondary-button" onClick={onApply}>{applied ? "Reload empty fields" : "Load compatible values"}</button></div>
-    <p className="entry-inline-note">The source HN is loaded only as a lookup value. It never selects or creates a patient automatically.</p>
-    {choices.length ? <details className="prescription-import-options"><summary>{choices.length} extracted controlled value{choices.length === 1 ? "" : "s"} need your Options-model selection</summary><ul>{choices.map((choice, index) => <li key={index}>{choice}</li>)}</ul></details> : null}
-  </section>;
-}
-
 export default function EntriesPatientEntryPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedPatientId = Number(searchParams.get("patient_id"));
   const prescriptionDocumentId = Number(searchParams.get("prescription_document"));
+  useEffect(() => {
+    if (Number.isSafeInteger(prescriptionDocumentId) && prescriptionDocumentId > 0) {
+      navigate(`/prescriptions/${prescriptionDocumentId}/review`, { replace: true });
+    }
+  }, [navigate, prescriptionDocumentId]);
   const [activeStep, setActiveStep] = useState(0);
   const visibleStepIndex = stepTargets.indexOf(activeStep);
   const [error, setError] = useState("");
@@ -1179,10 +1104,6 @@ export default function EntriesPatientEntryPage() {
     null,
   );
   const [draftNotice, setDraftNotice] = useState("");
-  const [prescriptionHandoffApplied, setPrescriptionHandoffApplied] = useState<number | null>(null);
-  const [prescriptionEventIndex, setPrescriptionEventIndex] = useState(0);
-  const [prescriptionImportApplied, setPrescriptionImportApplied] = useState(false);
-  const [prescriptionPatientConfirmationRequired, setPrescriptionPatientConfirmationRequired] = useState(false);
   const deferredLookup = useDeferredValue(lookup);
   const [patient, setPatient] = useState({
     patient_id: "",
@@ -1310,7 +1231,7 @@ export default function EntriesPatientEntryPage() {
       patient.phone.trim().length >= 6,
   });
   const resolvedPatientId =
-    existingPatientId ?? (prescriptionPatientConfirmationRequired ? null : patientLookupQuery.data?.match?.id ?? null);
+    existingPatientId ?? patientLookupQuery.data?.match?.id ?? null;
   const selectedPatientQuery = useQuery({
     queryKey: ["entries-patient", resolvedPatientId],
     queryFn: () => fetchEntriesPatient(resolvedPatientId!),
@@ -1336,12 +1257,6 @@ export default function EntriesPatientEntryPage() {
     gcTime: 0,
     refetchOnMount: "always",
   });
-  const prescriptionDraftQuery = useQuery({
-    queryKey: ["prescription-entry-draft", prescriptionDocumentId],
-    queryFn: () => fetchPrescriptionEntryDraft(prescriptionDocumentId),
-    enabled: Number.isSafeInteger(prescriptionDocumentId) && prescriptionDocumentId > 0,
-    staleTime: 0,
-  });
   const options = optionsQuery.data ?? {};
   const getOptions = (key: string) => options[key] ?? [];
   const subgroups = getOptions("diagnosis-disease-subgroups").filter(
@@ -1353,53 +1268,6 @@ export default function EntriesPatientEntryPage() {
     (option) =>
       !patient.district || String(option.district) === patient.district,
   );
-
-  const applyPrescriptionSuggestions = () => {
-    const handoff = prescriptionDraftQuery.data;
-    const selected = handoff?.intake_draft.observations[prescriptionEventIndex];
-    if (!handoff || !selected) return;
-    const patientValues = handoff.intake_draft.patient.values;
-    const firstDiagnosis = draftRecords(selected, "diagnoses")[0]?.values ?? {};
-    const firstHistopathology = draftRecords(selected, "histopathologies")[0]?.values ?? {};
-    const importedMarkers = draftRecords(selected, "cancer_markers").map((record) => {
-      const values = record.values;
-      const marker = draftText(values.marker ?? values.marker_name);
-      const value = draftText(values.value ?? values.marker_value);
-      const testedAt = draftText(values.tested_on ?? values.tested_at ?? values.date);
-      return {
-        ...blankMarker(),
-        marker_value: value,
-        tested_at: testedAt,
-        notes: marker ? `Extracted marker: ${marker}. Choose the matching Marker option before saving.` : "",
-      };
-    }).filter((row) => row.marker_value || row.tested_at || row.notes);
-    const ageMatch = draftText(patientValues.age).match(/\d+/);
-    setPatient((current) => ({
-      ...current,
-      registration_no: current.registration_no || draftText(patientValues.registration_no ?? patientValues.patient_identifier),
-      name: current.name || draftText(patientValues.name),
-      phone: current.phone || draftText(patientValues.phone),
-      age: current.age || ageMatch?.[0] || "",
-    }));
-    setObservation((current) => ({
-      ...current,
-      observed_at: current.observed_at || draftText(selected.observed_at),
-      prescription_date: current.prescription_date || draftText(selected.prescription_date),
-      prescription_age_years: current.prescription_age_years || ageMatch?.[0] || "",
-    }));
-    setDiagnosis((current) => ({
-      ...current,
-      diagnosis_in_details: current.diagnosis_in_details || draftText(firstDiagnosis.value ?? firstDiagnosis.diagnosis ?? firstDiagnosis.details),
-      biopsy_date: current.biopsy_date || draftText(firstHistopathology.biopsy_date ?? firstHistopathology.date),
-      report_date: current.report_date || draftText(firstHistopathology.report_date),
-      report_summary: current.report_summary || draftText(firstHistopathology.report_summary ?? firstHistopathology.value ?? firstHistopathology.result),
-    }));
-    setMarkers((current) => current.length === 1 && !current[0].marker_name && !current[0].marker_value && !current[0].tested_at && !current[0].notes && importedMarkers.length ? importedMarkers : current);
-    setPrescriptionPatientConfirmationRequired(true);
-    setPrescriptionHandoffApplied(handoff.review_id);
-    setPrescriptionImportApplied(true);
-    setDraftNotice("Compatible prescription text and dates were loaded into empty fields. Review every suggestion and choose all controlled values from the existing Options lists.");
-  };
 
   const queryClient = useQueryClient();
   const saveMutation = useMutation({
@@ -1485,7 +1353,7 @@ export default function EntriesPatientEntryPage() {
   }, [selectedPatientQuery.data?.id]);
   useEffect(() => {
     const selected = patientLookupQuery.data?.match;
-    if (!selected || prescriptionPatientConfirmationRequired) return;
+    if (!selected) return;
     setExistingPatientId(selected.id);
     setPatient((current) => {
       const next = {
@@ -1519,7 +1387,7 @@ export default function EntriesPatientEntryPage() {
         ? current
         : next;
     });
-  }, [patientLookupQuery.data?.match?.id, prescriptionPatientConfirmationRequired]);
+  }, [patientLookupQuery.data?.match?.id]);
   useEffect(() => {
     if (!previousTreatmentProtocol) return;
     setTreatments((current) =>
@@ -1536,11 +1404,6 @@ export default function EntriesPatientEntryPage() {
       ),
     );
   }, [previousTreatmentProtocol]);
-  useEffect(() => {
-    const observations = prescriptionDraftQuery.data?.intake_draft.observations;
-    if (!observations?.length) return;
-    setPrescriptionEventIndex((current) => Math.min(current, observations.length - 1));
-  }, [prescriptionDraftQuery.data?.review_id, prescriptionDraftQuery.data?.intake_draft.observations.length]);
   useEffect(() => {
     const draft = draftQuery.data?.draft;
     if (!draftQuery.isSuccess) return;
@@ -2170,11 +2033,6 @@ export default function EntriesPatientEntryPage() {
             {error}
           </p>
         ) : null}
-        {prescriptionDraftQuery.data?.intake_draft ? <PrescriptionImportPanel draft={prescriptionDraftQuery.data.intake_draft} eventIndex={prescriptionEventIndex} onEventChange={(index) => { setPrescriptionEventIndex(index); setPrescriptionImportApplied(false); }} onApply={applyPrescriptionSuggestions} applied={prescriptionImportApplied} /> : null}
-        <PrescriptionEvidencePanel
-          activeStep={activeStep}
-          reviewedData={prescriptionDraftQuery.data?.reviewed_data}
-        />
         {draftNotice ? (
           <div
             className="entry-modal-backdrop"
@@ -2196,8 +2054,8 @@ export default function EntriesPatientEntryPage() {
               >
                 <X size={19} />
               </button>
-              <p className="eyebrow">{prescriptionHandoffApplied ? "Prescription review" : "Draft status"}</p>
-              <h3 id="draft-save-title">{prescriptionHandoffApplied ? "Prescription draft imported" : "Draft saved"}</h3>
+              <p className="eyebrow">Draft status</p>
+              <h3 id="draft-save-title">Draft saved</h3>
               <p>{draftNotice}</p>
             </section>
           </div>
@@ -2266,12 +2124,6 @@ export default function EntriesPatientEntryPage() {
                 }
               />
             </div>
-            {prescriptionPatientConfirmationRequired && patientLookupQuery.data?.match ? (
-              <p className="entry-inline-note prescription-patient-match">
-                A registry patient matches the extracted HN: <strong>{patientLookupQuery.data.match.name}</strong>. Confirm this identity before attaching the observation.
-                <button type="button" className="entry-link-button" onClick={() => { setExistingPatientId(patientLookupQuery.data!.match!.id); setPrescriptionPatientConfirmationRequired(false); }}>Use matched patient</button>
-              </p>
-            ) : null}
             {patientLookupQuery.data?.count &&
             !patientLookupQuery.data.match ? (
               <p className="entry-inline-note">

@@ -22,6 +22,7 @@ const LoginPage = lazy(() => import('./pages/LoginPage'))
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'))
 const LongitudinalAnalyticsPage = lazy(() => import('./pages/LongitudinalAnalyticsPage'))
 const PrescriptionReviewPage = lazy(() => import('./pages/PrescriptionReviewPage'))
+const PrescriptionCorrectionPage = lazy(() => import('./pages/PrescriptionCorrectionPage'))
 
 function routeAuthenticatedUser(user: AuthUser, navigate: ReturnType<typeof useNavigate>) {
   if (user.default_redirect.startsWith('/admin')) {
@@ -190,6 +191,7 @@ function ProtectedRoutes() {
       <Route path="analytics" element={<AnalyticsPage />} />
       <Route path="longitudinal-analytics" element={<LongitudinalAnalyticsPage />} />
       <Route path="prescriptions" element={<PrescriptionReviewPage />} />
+      <Route path="prescriptions/:documentId/review" element={<PrescriptionCorrectionPage />} />
       <Route path="patients/:registryId" element={<PatientDetailPage />} />
       <Route path="*" element={<Navigate to="/patients" replace />} />
     </Routes>

@@ -735,6 +735,15 @@ export class ApiError extends Error {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
+/** Use Vite's authenticated same-origin proxy for private file previews in development. */
+export function prescriptionPreviewUrl(url: string) {
+  if (!import.meta.env.DEV) return url;
+  const source = new URL(url, window.location.origin);
+  return source.origin !== window.location.origin && source.pathname.startsWith("/api/")
+    ? `${source.pathname}${source.search}`
+    : url;
+}
+
 function getCookie(name: string) {
   const value = `; ${document.cookie}`;
   const parts = value.split(`; ${name}=`);
@@ -1945,6 +1954,7 @@ export interface PrescriptionReview {
   reviewed_data: LongitudinalIntakeDraft;
   notes: string;
   reviewed_at: string | null;
+  published_at: string | null;
   created_at: string;
   updated_at: string;
   changes: PrescriptionReviewChange[];
@@ -1969,6 +1979,10 @@ export interface PrescriptionDocument {
 
 export function fetchPrescriptionDocuments() {
   return request<PrescriptionDocument[]>("/api/prescriptions/documents/");
+}
+
+export function fetchPrescriptionDocument(documentId: number) {
+  return request<PrescriptionDocument>(`/api/prescriptions/documents/${documentId}/`);
 }
 
 export function uploadPrescriptionDocument(file: File, patientId?: number) {

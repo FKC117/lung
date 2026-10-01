@@ -14,6 +14,8 @@ logger = logging.getLogger("celery.tasks")
 
 SCHEMA_VERSION = "1"
 
+PATIENT_FIELDS = {"name", "age", "gender", "patient_identifier", "registration_no", "phone"}
+
 SYSTEM_INSTRUCTION = """You extract facts from oncology prescriptions for a human review queue.
 Return JSON only. Never diagnose from medicine names, infer negative results, infer a death,
 infer progression from a treatment change, infer administration from a prescription, or invent
@@ -30,6 +32,11 @@ cancer_markers, treatments, surgeries, radiotherapies, recist_assessments, ireci
 pathological_responses, progression_records, and survival_records. Use page numbers supplied in
 the source. Preserve wording faithfully. Never return option_id, database_id, or pk fields, and
 never return prose outside JSON.
+
+patient is an object, never one evidence value. Its only permitted keys are name, age,
+gender, patient_identifier, registration_no, and phone. Each populated patient key must use
+the same value/source_text/page/confidence evidence object. Leave a patient key absent when
+the document does not support it.
 
 Patient identifiers are safety-critical. Only identify a patient number when its label
 explicitly belongs to the patient (for example HN, HN ID, MRN, UHID, Patient ID, or Hospital
@@ -61,6 +68,18 @@ def validate_extraction(data):
         raise ValueError("The extractor response has invalid patient or observations sections.")
     if not isinstance(data["unresolved_items"], list) or not isinstance(data["warnings"], list):
         raise ValueError("The extractor response has invalid warnings sections.")
+
+    patient = data["patient"]
+    unknown_patient_fields = set(patient) - PATIENT_FIELDS
+    if unknown_patient_fields:
+        raise ValueError(f"The extractor response has unsupported patient fields: {', '.join(sorted(unknown_patient_fields))}.")
+    for field, evidence in patient.items():
+        if not isinstance(evidence, dict) or not {"value", "source_text", "page", "confidence"} <= set(evidence):
+            raise ValueError(f"The extractor patient field '{field}' must include value, source_text, page, and confidence.")
+        if not isinstance(evidence["page"], int) or evidence["page"] < 1:
+            raise ValueError(f"The extractor patient field '{field}' has an invalid page.")
+        if not isinstance(evidence["confidence"], (int, float)) or not 0 <= evidence["confidence"] <= 1:
+            raise ValueError(f"The extractor patient field '{field}' has an invalid confidence.")
     for observation in data["observations"]:
         if not isinstance(observation, dict):
             raise ValueError("Every extractor observation must be an object.")

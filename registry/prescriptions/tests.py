@@ -40,6 +40,15 @@ from .services.text_analysis import find_explicit_entities
 
 
 class PatientIdentifierExtractionTests(TestCase):
+    def test_patient_evidence_leaf_cannot_replace_patient_object(self):
+        with self.assertRaisesMessage(ValueError, "unsupported patient fields"):
+            validate_extraction({
+                "patient": {"value": "H123", "source_text": "HN: H123", "page": 1, "confidence": 1.0},
+                "observations": [],
+                "unresolved_items": [],
+                "warnings": [],
+            })
+
     def test_hn_id_is_extracted_and_bmdc_registration_is_excluded(self):
         page = SimpleNamespace(
             page_number=1,
@@ -370,6 +379,20 @@ class DraftApiTests(TestCase):
         self.assertEqual(Diagnosis.objects.count(), 0)
         self.assertEqual(MolecularTest.objects.count(), 0)
 
+    def test_start_review_rejects_an_unprocessed_document_without_creating_a_review(self):
+        document = PrescriptionDocument.objects.create(
+            file="prescriptions/unprocessed.pdf",
+            original_filename="unprocessed.pdf",
+            sha256="b" * 64,
+            status=PrescriptionDocument.Status.UPLOADED,
+            uploaded_by=self.user,
+        )
+
+        response = self.client.post(f"/api/prescriptions/documents/{document.pk}/start-review/")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(PrescriptionReview.objects.filter(document=document).exists())
+
     def test_entry_draft_action_is_on_document_route(self):
         response = self.client.get(f"/api/prescriptions/documents/{self.document.pk}/entry-draft/")
         self.assertEqual(response.status_code, 200)
@@ -607,6 +630,7 @@ class DraftApiTests(TestCase):
             )
 
             self.assertEqual(document_response.status_code, 200)
+            self.assertEqual(document_response["X-Frame-Options"], "SAMEORIGIN")
             self.assertEqual(b"".join(document_response.streaming_content), b"private prescription")
             self.assertEqual(page_response.status_code, 200)
             self.assertEqual(b"".join(page_response.streaming_content), b"private page")
