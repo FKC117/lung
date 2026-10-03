@@ -400,3 +400,121 @@ html[data-theme] .molecular-finding-card {
 }
 html[data-theme] .molecular-findings-header { border-color: var(--border); }
 html[data-theme] .molecular-findings-header h3 { color: var(--text); }
+
+/* Prescription intake and extraction preview share the workspace palette. */
+html[data-theme] .prescription-intake-stats span {
+  color: var(--muted);
+  border-color: var(--border);
+  background: var(--surface-muted);
+}
+html[data-theme] .prescription-intake-stats strong,
+html[data-theme] .prescription-drop-target svg,
+html[data-theme] .prescription-upload-item.is-queued svg,
+html[data-theme] .prescription-history-status.is-ready_for_review,
+html[data-theme] .prescription-history-state.is-ready_for_review { color: var(--accent); }
+html[data-theme] .prescription-drop-target {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface-muted);
+  font: inherit;
+}
+html[data-theme] .prescription-drop-target:hover { background: var(--accent-soft); }
+html[data-theme] .prescription-drop-target:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+html[data-theme] .prescription-drop-target small,
+html[data-theme] .prescription-upload-item small,
+html[data-theme] .prescription-history-file small,
+html[data-theme] .prescription-history-empty,
+html[data-theme] .prescription-history-state { color: var(--muted); }
+html[data-theme] .prescription-upload-item,
+html[data-theme] .prescription-history-row {
+  background: var(--surface-strong);
+  color: var(--text);
+  border-color: var(--border);
+}
+html[data-theme] .prescription-history-status { background: var(--surface-muted); color: var(--muted); }
+html[data-theme] .prescription-extraction-preview {
+  color: var(--text);
+  background: var(--surface-strong);
+  border-color: var(--border);
+}
+html[data-theme] .prescription-extraction-preview h3,
+html[data-theme] .prescription-extraction-preview .entry-modal-close { color: var(--text); }
+html[data-theme] .prescription-preview-section,
+html[data-theme] .prescription-gemini-fact,
+html[data-theme] .prescription-gemini-composite .prescription-gemini-fact,
+html[data-theme] .prescription-gemini-raw {
+  color: var(--text);
+  background: var(--surface-muted);
+  border-color: var(--border);
+}
+html[data-theme] .prescription-extracted-item,
+html[data-theme] .prescription-gemini-event,
+html[data-theme] .prescription-gemini-composite { background: var(--accent-soft); }
+html[data-theme] .prescription-gemini-event { border-color: var(--accent); }
+html[data-theme] .prescription-preview-section h4,
+html[data-theme] .prescription-extracted-item-number,
+html[data-theme] .prescription-gemini-fact small,
+html[data-theme] .prescription-gemini-event > header span,
+html[data-theme] .prescription-gemini-event > header strong { color: var(--accent); }
+html[data-theme] .prescription-extracted-fields dt,
+html[data-theme] .prescription-empty-value,
+html[data-theme] .prescription-gemini-fact > strong,
+html[data-theme] .prescription-gemini-fact em { color: var(--muted); }
+html[data-theme] .prescription-extracted-fields dd,
+html[data-theme] .prescription-gemini-fact > span,
+html[data-theme] .prescription-gemini-group > h5,
+html[data-theme] .prescription-gemini-composite > h5,
+html[data-theme] .prescription-gemini-raw summary,
+html[data-theme] .prescription-gemini-raw pre { color: var(--text); }
+html[data-theme] .prescription-extracted-fields > div { border-color: var(--border); }
+
+/* Dark-mode warning tints need deeper foregrounds on light surfaces. */
+html[data-theme='light'] .prescription-rerun-locked,
+html[data-theme='light'] .prescription-gemini-alerts p,
+html[data-theme='light'] .prescription-gemini-alerts h4,
+html[data-theme='light'] .prescription-history-status.is-gemini-unavailable,
+html[data-theme='light'] .prescription-history-state.is-gemini-unavailable,
+html[data-theme='light'] .prescription-gemini-unavailable-count strong,
+html[data-theme='light'] .prescription-gemini-unavailable-reason,
+html[data-theme='light'] .prescription-gemini-unavailable-reason strong { color: #805000; }
+html[data-theme='light'] .prescription-rerun-locked,
+html[data-theme='light'] .prescription-gemini-alerts,
+html[data-theme='light'] .prescription-history-row.is-gemini-unavailable {
+  border-color: #b58a3b;
+}
+html[data-theme='light'] .prescription-rerun-locked,
+html[data-theme='light'] .prescription-gemini-unavailable-reason,
+html[data-theme='light'] .prescription-gemini-alerts { background: #fff6e3; }
+html[data-theme='light'] .prescription-rerun-locked small { color: #765c30; }
+html[data-theme='light'] .prescription-history-status.is-processing,
+html[data-theme='light'] .prescription-upload-item.is-duplicate svg { color: #17649a; }
+html[data-theme='light'] .prescription-history-status.is-failed,
+html[data-theme='light'] .prescription-history-state.is-failed,
+html[data-theme='light'] .prescription-upload-item.is-failed svg,
+html[data-theme='light'] .prescription-failed-count,
+html[data-theme='light'] .prescription-error,
+html[data-theme='light'] .prescription-failure-reason,
+html[data-theme='light'] .prescription-failure-reason strong { color: #a12632; }
+html[data-theme='light'] .prescription-history-row.is-failed { border-color: #c37780; }
+html[data-theme='light'] .prescription-failure-reason { background: #fff0f1; }
+
+.prescription-card-action { margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--border); display: grid; gap: .65rem; }
+.prescription-card-action > button { justify-self: start; }
+
+.prescription-gemini-composite { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.prescription-gemini-composite > h5 { grid-column: 1 / -1; }
+.prescription-gemini-composite > .prescription-gemini-facts,
+.prescription-gemini-composite > .prescription-gemini-composite { grid-column: 1 / -1; }
+.prescription-card-buttons { display: flex; flex-wrap: wrap; gap: .5rem; }
+.prescription-gemini-fact { padding: .55rem .65rem; }
+@media (max-width: 850px) { .prescription-gemini-composite { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 540px) { .prescription-gemini-composite { grid-template-columns: 1fr; } }
+
+html[data-theme] .prescription-card-action > [role='alert'] { color: var(--text); background: var(--surface-muted); padding: .65rem; border: 1px solid var(--border); border-radius: .5rem; }
+.prescription-segment-review .entry-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.prescription-segment-review .entry-span-full { grid-column: 1 / -1; }
+@media (max-width: 850px) { .prescription-segment-review .entry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 540px) { .prescription-segment-review .entry-grid { grid-template-columns: 1fr; } }

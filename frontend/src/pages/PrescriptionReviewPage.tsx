@@ -1,8 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, Eye, FileText, Files, LoaderCircle, Play, Upload, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, type PrescriptionDocument, fetchPrescriptionDocuments, processPrescriptionDocument, reprocessPrescriptionDocument, uploadPrescriptionDocument } from "../api";
+
+import { PreviewPatientAction } from "../components/intake/PreviewPatientAction";
+import { PreviewDraftAction, PreviewDraftEditContext } from "../components/intake/PreviewDraftAction";
 
 const statusLabel: Record<PrescriptionDocument["status"], string> = { uploaded: "Waiting to queue", processing: "Extracting", ready_for_review: "Ready for correction", failed: "Extraction failed" };
 const statusIcon = { uploaded: Clock3, processing: LoaderCircle, ready_for_review: CheckCircle2, failed: XCircle };
@@ -47,11 +50,18 @@ function GeminiFact({ label, value }: { label: string; value: unknown }) {
   if (fact) return <section className="prescription-gemini-composite"><h5>{label}</h5>{Object.entries(fact).map(([key, item]) => <GeminiFact key={key} label={humanize(key)} value={item} />)}</section>;
   return <article className="prescription-gemini-fact"><strong>{label}</strong><span>{value === null || value === undefined || value === "" ? "Not supplied" : String(value)}</span></article>;
 }
-function GeminiEvent({ observation, index }: { observation: Record<string, unknown>; index: number }) {
+function GeminiEvent({ observation, index, documentId }: { observation: Record<string, unknown>; index: number; documentId: number }) {
   const groups = Object.entries(observation).filter(([key, value]) => key !== "temporal_context" && hasExtractedValue(value));
-  return <section className="prescription-gemini-event"><header><span>Event {index + 1}</span><strong>{String(observation.temporal_context ?? "unknown")}</strong></header>{groups.map(([key, value]) => <section className="prescription-gemini-group" key={key}><h5>{humanize(key)}</h5><GeminiFact label={humanize(key)} value={value} /></section>)}</section>;
+  return <section className="prescription-gemini-event"><header><span>Event {index + 1}</span><strong>{String(observation.temporal_context ?? "unknown")}</strong></header>{groups.map(([key, value]) => <section className="prescription-gemini-group" key={key}><h5>{humanize(key)}</h5><PreviewDraftAction documentId={documentId} collection={key} eventIndex={index}>{(editing) => editing ? null : <GeminiFact label={humanize(key)} value={value} />}</PreviewDraftAction></section>)}</section>;
 }
 function ExtractionPreview({ document, onClose, onCorrect }: { document: PrescriptionDocument; onClose: () => void; onCorrect: () => void }) {
+  const [editing, setEditing] = useState<Record<string, { dirty: boolean; busy: boolean }>>({});
+  const report = useCallback((key: string, dirty: boolean, busy: boolean) => setEditing((current) => current[key]?.dirty === dirty && current[key]?.busy === busy ? current : { ...current, [key]: { dirty, busy } }), []);
+  const close = () => {
+    if (Object.values(editing).some((state) => state.busy)) return;
+    if (Object.values(editing).some((state) => state.dirty) && !window.confirm("Discard unsaved dropdown choices and close?")) return;
+    onClose();
+  };
   const run = document.extraction_runs[0];
   const extracted = run?.structured_data && typeof run.structured_data === "object" ? run.structured_data as Record<string, unknown> : {};
   const gemini = record(extracted.gemini_extraction);
@@ -61,21 +71,21 @@ function ExtractionPreview({ document, onClose, onCorrect }: { document: Prescri
   const unresolved = Array.isArray(gemini?.unresolved_items) ? gemini.unresolved_items : [];
   const geminiUnavailable = geminiProblem(document);
   const populatedSections = Object.entries(extracted).filter(([key, value]) => !internalExtractionKeys.has(key) && hasExtractedValue(value));
-  return <div className="entry-modal-backdrop prescription-preview-backdrop" role="presentation" onMouseDown={onClose}>
+  return <PreviewDraftEditContext.Provider value={report}><div className="entry-modal-backdrop prescription-preview-backdrop" role="presentation" onMouseDown={close}>
     <section className="entry-modal prescription-extraction-preview" role="dialog" aria-modal="true" aria-labelledby="extraction-preview-title" onMouseDown={(event) => event.stopPropagation()}>
-      <button className="entry-modal-close" type="button" onClick={onClose} aria-label="Close extracted data">×</button>
-      <p className="eyebrow">Gemini extraction · read only</p><h3 id="extraction-preview-title">{document.original_filename}</h3>
-      <p>Gemini's structured suggestions are grouped by patient and observation. They remain evidence until a reviewer validates them in the prescription workspace.</p>
+      <button className="entry-modal-close" type="button" onClick={close} aria-label="Close extracted data">×</button>
+      <p className="eyebrow">Gemini extraction · review cards</p><h3 id="extraction-preview-title">{document.original_filename}</h3>
+      <p>Check each card, choose any dropdown values, then confirm or modify its draft data. Original Gemini evidence is preserved.</p>
       {geminiUnavailable ? <section className="prescription-preview-section prescription-gemini-alerts"><h4><AlertTriangle size={16} /> Gemini suggestions unavailable</h4><p>{geminiUnavailable}</p><p>OCR evidence is still available. Re-run extraction to request a new Gemini response.</p></section> : null}
       {gemini ? <div className="prescription-gemini-preview">
-        {patient && Object.keys(patient).length ? <section className="prescription-preview-section"><div className="prescription-preview-heading"><div><p className="eyebrow">Patient</p><h4>Patient identity</h4></div></div><div className="prescription-gemini-facts">{Object.entries(patient).map(([key, value]) => <GeminiFact key={key} label={humanize(key)} value={value} />)}</div></section> : null}
-        {observations.length ? <section className="prescription-preview-section"><div className="prescription-preview-heading"><div><p className="eyebrow">Clinical timeline</p><h4>{observations.length} extracted observation{observations.length === 1 ? "" : "s"}</h4></div></div><div className="prescription-gemini-events">{observations.map((observation, index) => <GeminiEvent key={index} observation={observation} index={index} />)}</div></section> : null}
+        {patient && Object.keys(patient).length ? <section className="prescription-preview-section"><div className="prescription-preview-heading"><div><p className="eyebrow">Patient</p><h4>Patient identity</h4></div></div><PreviewPatientAction documentId={document.id}>{(editing) => editing ? null : <div className="prescription-gemini-facts">{Object.entries(patient).map(([key, value]) => <GeminiFact key={key} label={humanize(key)} value={value} />)}</div>}</PreviewPatientAction></section> : null}
+        {observations.length ? <section className="prescription-preview-section"><div className="prescription-preview-heading"><div><p className="eyebrow">Clinical timeline</p><h4>{observations.length} extracted observation{observations.length === 1 ? "" : "s"}</h4></div></div><div className="prescription-gemini-events">{observations.map((observation, index) => <GeminiEvent key={index} observation={observation} index={index} documentId={document.id} />)}</div></section> : null}
         {warnings.length || unresolved.length ? <section className="prescription-preview-section prescription-gemini-alerts"><h4>Needs review</h4>{warnings.map((item, index) => <p key={`warning-${index}`}>{String(item)}</p>)}{unresolved.map((item, index) => <p key={`unresolved-${index}`}>{record(item)?.reason ? String(record(item)?.reason) : String(item)}</p>)}</section> : null}
         <details className="prescription-gemini-raw"><summary>View exact Gemini JSON</summary><pre>{JSON.stringify(gemini, null, 2)}</pre></details>
       </div> : populatedSections.length ? <section className="prescription-preview-section"><h4>Structured Gemini extraction is not available</h4><p className="hero-text">The deterministic extraction is available below. Gemini may be unconfigured or its request may have failed.</p><details className="prescription-gemini-raw"><summary>View deterministic extraction data</summary><pre>{JSON.stringify(Object.fromEntries(populatedSections), null, 2)}</pre></details></section> : <p className="hero-text">No structured suggestions are available yet. You can retry extraction from the history list.</p>}
-      <div className="prescription-preview-actions"><button className="secondary-button" type="button" onClick={onClose}>Close</button><button className="primary-button" type="button" onClick={onCorrect}>Review & correct <ArrowRight size={15} /></button></div>
+      <div className="prescription-preview-actions"><button className="secondary-button" type="button" onClick={close}>Close</button><button className="primary-button" type="button" onClick={() => { if (Object.values(editing).some((state) => state.busy)) return; if (Object.values(editing).some((state) => state.dirty) && !window.confirm("Discard unsaved dropdown choices and open the full review?")) return; onCorrect(); }}>Review & correct <ArrowRight size={15} /></button></div>
     </section>
-  </div>;
+  </div></PreviewDraftEditContext.Provider>;
 }
 
 type UploadState = "waiting" | "uploading" | "queued" | "duplicate" | "failed";

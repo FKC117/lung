@@ -643,3 +643,23 @@ Final verification on 2026-10-01: all 85 prescription backend tests passed, all 
 - Supplementary UI improvement: populated fields and nonempty original extracted suggestions highlight the complete label/evidence/control box, including unmatched catalog values. Empty/Not supplied fields stay neutral.
 - Shared theme tokens supply the light/dark background, border and evidence text. Molecular finding cards and headings now follow the selected palette.
 - Main acceptance count remains 42/46 (91.3%); this visual refinement does not substitute for clinical evaluation or release decisions.
+
+### Preview card actions - 2026-10-03
+
+- Restored the original Gemini card preview following owner clarification; the complete correction form is not embedded.
+- Clinical groups now offer inline dropdown choices and a save-to-observation-draft action. Source fact record IDs identify the existing mapped items; actions do not guess an observation from its display position or duplicate records.
+- Shared revision-checked draft persistence, catalog dependency clearing, locked-review protection and unsaved-choice close protection remain in place. Unmapped older drafts explicitly require loading their latest extraction in the full review first.
+- Verification: 59 frontend tests passed; targeted action tests passed again after close protection. Overall main acceptance remains 42/46 (91.3%).
+
+### Correct / Modify on preview cards - 2026-10-03
+
+- Patient identity now has Correct and Modify actions; inline edits and confirmation use revision-checked canonical draft persistence while preserving patient match status and selection.
+- Clinical groups show mapped dropdown choices directly for existing drafts, with Correct and Modify below. Modify includes scalar clinical fields; original evidence remains above. No automatic write occurs during dropdown preparation.
+- Clinical fact cards use a responsive three/two/one-column layout to reduce empty space. Source JSON remains immutable and final approval/publication remain separate.
+- Verification: production build passed; 59 existing frontend regressions passed; five focused card tests passed including patient confirmation, modification, read-only dropdown loading, duplicate prevention and unmapped-source protection. Main acceptance remains 42/46 (91.3%).
+
+### Segment-local Modify editors - 2026-10-03
+
+- Modify replaces patient/clinical preview cards within the same segment with appropriate editable fields. Nonclinical evidence segments remain visible.
+- When an older saved review lacks the latest mapped records, Modify prepares controls from the immutable latest canonical extraction. Explicit Save uses the guarded audited latest-extraction refresh before revision-checked corrections; existing edited reviews are not overwritten.
+- Error text follows the theme and remains readable in light mode. Seven focused preview editor tests passed, including segment replacement and save-only refresh; production build passed. Main acceptance remains 42/46 (91.3%).

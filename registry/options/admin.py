@@ -169,6 +169,7 @@ lookup_models = [
 
 class LookupAdmin(ImportExportModelAdmin):
     list_display = ("id", "name")
+    list_display_links = ("id", "name")
     search_fields = ("name",)
     ordering = ("name",)
 
@@ -180,6 +181,7 @@ for model in lookup_models:
 @admin.register(DiagnosisDiseaseGroup)
 class DiagnosisDiseaseGroupAdmin(ImportExportModelAdmin):
     list_display = ("id", "icd10_code", "name")
+    list_display_links = ("id", "name", "icd10_code")
     search_fields = ("icd10_code", "name")
     ordering = ("icd10_code", "name")
 
@@ -194,16 +196,20 @@ class CenterAdmin(ImportExportModelAdmin):
 @admin.register(Doctor)
 class DoctorAdmin(ImportExportModelAdmin):
     list_display = ("id", "name", "bmdc_number", "phone", "email", "institution", "center", "status")
+    list_display_links = ("id", "name")
     list_filter = ("center", "status")
     search_fields = ("name", "bmdc_number", "phone", "email", "institution", "center__name")
+    auto_complete_fields = ("center",)
     list_select_related = ("center",)
     ordering = ("name",)
+    raw_id_fields = ("center",)
 
 
 
 @admin.register(Thana)
 class ThanaAdmin(ImportExportModelAdmin):
     list_display = ("id", "name", "district")
+    list_display_links = ("id", "name", "district")
     list_filter = ("district",)
     search_fields = ("name", "district__name")
     ordering = ("district__name", "name")
@@ -212,14 +218,17 @@ class ThanaAdmin(ImportExportModelAdmin):
 @admin.register(DiagnosisDiseaseSubgroup)
 class DiagnosisDiseaseSubgroupAdmin(ImportExportModelAdmin):
     list_display = ("id", "icd10_code", "name", "disease_group")
+    list_display_links = ("id", "name", "icd10_code", "disease_group")
     list_filter = ("disease_group",)
     search_fields = ("icd10_code", "name", "disease_group__icd10_code", "disease_group__name")
     ordering = ("disease_group__icd10_code", "icd10_code", "name")
+    raw_id_fields = ("disease_group",)
 
 
 @admin.register(MolecularPathologyExon)
 class MolecularPathologyExonAdmin(ImportExportModelAdmin):
     list_display = ("id", "name", "gene")
+    list_display_links = ("id", "name", "gene")
     list_filter = ("gene",)
     search_fields = ("name", "gene__name")
     ordering = ("gene__name", "name")
@@ -228,6 +237,7 @@ class MolecularPathologyExonAdmin(ImportExportModelAdmin):
 @admin.register(MolecularPanel)
 class MolecularPanelAdmin(ImportExportModelAdmin):
     list_display = ("id", "name", "manufacturer", "is_active")
+    list_display_links = ("id", "name")
     list_filter = ("is_active",)
     search_fields = ("name", "manufacturer", "description")
     ordering = ("name",)
@@ -236,6 +246,7 @@ class MolecularPanelAdmin(ImportExportModelAdmin):
 @admin.register(MolecularPanelVersion)
 class MolecularPanelVersionAdmin(ImportExportModelAdmin):
     list_display = ("id", "panel", "version", "method", "reporting_policy", "is_active")
+    list_display_links = ("id", "panel", "version")
     list_filter = ("reporting_policy", "is_active", "method")
     search_fields = ("panel__name", "version", "method__name")
     list_select_related = ("panel", "method")
@@ -245,6 +256,7 @@ class MolecularPanelVersionAdmin(ImportExportModelAdmin):
 @admin.register(MolecularPanelTarget)
 class MolecularPanelTargetAdmin(ImportExportModelAdmin):
     list_display = ("id", "panel_version", "gene", "alteration_type", "is_reportable")
+    list_display_links = ("id", "panel_version", "gene", "alteration_type", "is_reportable")
     list_filter = ("alteration_type", "is_reportable")
     search_fields = ("panel_version__panel__name", "panel_version__version", "gene__name")
     list_select_related = ("panel_version__panel", "gene", "alteration_type")
@@ -253,6 +265,7 @@ class MolecularPanelTargetAdmin(ImportExportModelAdmin):
 @admin.register(TreatmentProtocolDrug)
 class TreatmentProtocolDrugAdmin(ImportExportModelAdmin):
     list_display = ("id", "protocol", "drug", "sequence")
+    list_display_links = ("id", "protocol", "drug", "sequence")
     list_filter = ("protocol", "drug")
     search_fields = ("protocol__name", "drug__name")
     list_select_related = ("protocol", "drug")

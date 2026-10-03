@@ -35,6 +35,7 @@ class PatientAdmin(ImportExportModelAdmin):
     search_fields = ("registration_no", "patient_id", "name", "phone", "email", "nid", "passport")
     list_select_related = ("sex", "type_of_patient", "district")
     ordering = ("patient_id",)
+    
 
 
 @admin.register(ClinicalObservation)
