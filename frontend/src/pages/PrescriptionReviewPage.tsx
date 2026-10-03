@@ -24,6 +24,7 @@ function geminiProblem(document: PrescriptionDocument) {
   const run = document.extraction_runs[0];
   const extracted = record(run?.structured_data);
   if (!run || !extracted) return null;
+  if (extracted.gemini_status === "policy_blocked") return String(extracted.gemini_error || "Gemini transmission is disabled by the data policy. Local extraction is ready for review.");
   if (extracted.gemini_status === "unavailable") return String(extracted.gemini_error || "Gemini structured extraction was unavailable. Deterministic OCR evidence is ready for review.");
   const gemini = record(extracted.gemini_extraction);
   const unresolved = Array.isArray(gemini?.unresolved_items) ? gemini.unresolved_items.map(record) : [];

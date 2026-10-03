@@ -1,0 +1,9 @@
+# Verified local prescription orchestration runtime on 2026-10-02.
+# Apply with requirements.txt; this is not a complete transitive dependency lock.
+langgraph==1.2.11
+google-genai==2.24.0
+Django==6.1.1
+celery==5.6.3
+psycopg==3.3.6
+langgraph-checkpoint==4.2.0
+langchain-core==1.6.3

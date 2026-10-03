@@ -23,6 +23,7 @@ from options.models import (
     MolecularPathologyMethod,
     MolecularPathologyResult,
     ProgressionSite,
+    DiseaseProgressionStatus,
     Thana,
     TreatmentDrug,
     TreatmentProtocol,
@@ -227,7 +228,9 @@ class GeminiQuotaControlTests(TestCase):
 
     def test_retry_countdown_uses_exponential_backoff_and_honours_provider_hint(self):
         task = SimpleNamespace(request=SimpleNamespace(retries=2))
-        self.assertEqual(_gemini_retry_countdown(task, GeminiRateLimitError()), 240)
+        delay = _gemini_retry_countdown(task, GeminiRateLimitError())
+        self.assertGreaterEqual(delay, 240)
+        self.assertLessEqual(delay, 288)
         self.assertEqual(_gemini_retry_countdown(task, GeminiRateLimitError(retry_after_seconds=20)), 20)
 
     def test_exhausted_quota_retries_mark_document_failed_with_actionable_issue(self):
@@ -370,7 +373,7 @@ class OptionResolutionTests(TestCase):
             }]
         }, document_id=6)
         molecular = draft["observations"][0]["molecular_tests"][0]
-        self.assertEqual(molecular["resolutions"]["reported_result"]["status"], "resolved")
+        self.assertEqual(molecular["resolutions"]["result"]["status"], "resolved")
         self.assertEqual(MolecularTest.objects.count(), 0)
         self.assertEqual(MolecularTestResult.objects.count(), 0)
 
@@ -469,13 +472,14 @@ class OptionResolutionTests(TestCase):
     def test_multi_option_resolutions_validate_real_option_ids(self):
         metastatic_site = DiagnosisMetastaticSite.objects.create(name="Liver")
         progression_site = ProgressionSite.objects.create(name="Bone")
+        progression_status = DiseaseProgressionStatus.objects.create(name="Synthetic progression")
         draft = empty_draft(26)
         draft["patient"]["match_status"] = "new"
         observation = empty_observation()
         diagnosis = record(values={"metastatic_sites": [metastatic_site.pk]})
         diagnosis["resolutions"] = {"metastatic_sites": {**resolution("diagnosis-metastatic-sites", None), "status": "resolved", "option_ids": [metastatic_site.pk]}}
-        progression = record(values={"progression_sites": [progression_site.pk]})
-        progression["resolutions"] = {"progression_sites": {**resolution("progression-sites", None), "status": "resolved", "option_ids": [progression_site.pk]}}
+        progression = record(values={"progression_sites": [progression_site.pk], "status": progression_status.pk, "assessed_on": "2026-01-01"})
+        progression["resolutions"] = {"status": resolution("disease-progression-statuses", progression_status), "progression_sites": {**resolution("progression-sites", None), "status": "resolved", "option_ids": [progression_site.pk]}}
         observation["diagnoses"].append(diagnosis)
         observation["progression_records"].append(progression)
         draft["observations"].append(observation)
@@ -583,15 +587,15 @@ class DraftApiTests(TestCase):
         review.reviewed_data = draft
         review.selected_patient = patient
         review.save(update_fields=["reviewed_data", "selected_patient", "updated_at"])
-        self.assertEqual(self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/").status_code, 200)
+        self.assertEqual(self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/", {"expected_revision": PrescriptionReview.objects.get(document=self.document).revision}, format="json").status_code, 200)
 
-        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/publish/")
+        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/publish/", {"expected_revision": PrescriptionReview.objects.get(document=self.document).revision}, format="json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["observation_ids"]), 1)
         self.assertEqual(ClinicalObservation.objects.count(), 1)
         self.assertEqual(PatientAnthropometry.objects.count(), 1)
         self.assertTrue(RecordProvenance.objects.filter(document=self.document).exists())
-        repeated = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/publish/")
+        repeated = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/publish/", {"expected_revision": PrescriptionReview.objects.get(document=self.document).revision}, format="json")
         self.assertEqual(repeated.status_code, 200)
         self.assertTrue(repeated.data["counts"]["already_published"])
         self.assertEqual(ClinicalObservation.objects.count(), 1)
@@ -603,8 +607,8 @@ class DraftApiTests(TestCase):
         draft = deepcopy(review.reviewed_data)
         draft["patient"] = {"match_status": "existing", "patient_id": patient.pk, "values": {}}
         draft["observations"][0]["anthropometry"] = {"height_cm": "bad", "weight_kg": "70"}
-        review.reviewed_data = draft; review.selected_patient = patient; review.status = PrescriptionReview.Status.APPROVED
-        review.save(update_fields=["reviewed_data", "selected_patient", "status", "updated_at"])
+        review.reviewed_data = draft; review.selected_patient = patient; review.status = PrescriptionReview.Status.APPROVED; review.approved_revision = review.revision
+        review.save(update_fields=["reviewed_data", "selected_patient", "status", "approved_revision", "updated_at"])
         with self.assertRaises(Exception):
             publish_review(review, self.user)
         self.assertEqual(ClinicalObservation.objects.count(), 0)
@@ -653,8 +657,8 @@ class DraftApiTests(TestCase):
         review = PrescriptionReview.objects.get(document=self.document)
         draft = deepcopy(review.reviewed_data)
         draft["patient"] = {"match_status": "existing", "patient_id": patient.pk, "values": {"name": "After"}}
-        review.reviewed_data = draft; review.selected_patient = patient; review.status = PrescriptionReview.Status.APPROVED
-        review.save(update_fields=["reviewed_data", "selected_patient", "status", "updated_at"])
+        review.reviewed_data = draft; review.selected_patient = patient; review.status = PrescriptionReview.Status.APPROVED; review.approved_revision = review.revision
+        review.save(update_fields=["reviewed_data", "selected_patient", "status", "approved_revision", "updated_at"])
         observations, _ = publish_review(review, self.user)
         patient.refresh_from_db()
         self.assertEqual(patient.name, "After")
@@ -688,13 +692,13 @@ class DraftApiTests(TestCase):
         unresolved_items = deepcopy(baseline)
         unresolved_items["unresolved_items"] = [{"type": "test", "reason": "Needs review"}]
         self._save_review_draft(unresolved_items)
-        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/")
+        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/", {"expected_revision": PrescriptionReview.objects.get(document=self.document).revision}, format="json")
         self.assertEqual(response.status_code, 400)
 
         unresolved_record = deepcopy(baseline)
         unresolved_record["observations"][0]["diagnoses"].append(record("unresolved-record", state="unresolved"))
         self._save_review_draft(unresolved_record)
-        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/")
+        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/", {"expected_revision": PrescriptionReview.objects.get(document=self.document).revision}, format="json")
         self.assertEqual(response.status_code, 400)
 
         ambiguous_resolution = deepcopy(baseline)
@@ -704,7 +708,7 @@ class DraftApiTests(TestCase):
         )
         ambiguous_resolution["observations"][0]["treatments"].append(item)
         self._save_review_draft(ambiguous_resolution)
-        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/")
+        response = self.client.post(f"/api/prescriptions/documents/{self.document.pk}/approve-review/", {"expected_revision": PrescriptionReview.objects.get(document=self.document).revision}, format="json")
         self.assertEqual(response.status_code, 400)
 
         review.refresh_from_db()

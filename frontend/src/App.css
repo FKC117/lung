@@ -4520,3 +4520,16 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Keep observation management out of the source/form comparison columns. */
+.clinical-intake-grid { grid-template-columns: minmax(280px, .8fr) minmax(0, 2fr); }
+.clinical-editor-column { min-width: 0; }
+.clinical-observation-bar { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .85rem; }
+.clinical-observation-bar > label { display: flex; align-items: center; gap: .65rem; min-width: 0; font-size: .85rem; }
+.clinical-observation-bar select { min-width: 0; max-width: 100%; }
+.clinical-observation-menu { position: relative; flex-shrink: 0; }
+.clinical-observation-menu > summary { cursor: pointer; color: var(--text-muted); font-size: .8rem; padding: .5rem; }
+.clinical-observation-menu[open] { padding: .6rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.clinical-observation-menu .clinical-timeline-tools { margin-top: .5rem; }
+@media (max-width: 1120px) { .clinical-intake-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .clinical-observation-bar { align-items: stretch; flex-direction: column; }.clinical-observation-bar > label { align-items: stretch; flex-direction: column; } }

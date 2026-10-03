@@ -7,6 +7,7 @@ from uuid import uuid4
 from django.core.exceptions import ValidationError
 
 from records.models import Patient
+from prescriptions.services.field_contract import fields, normalize_aliases, contract
 
 
 SCHEMA_VERSION = 1
@@ -44,9 +45,11 @@ OBSERVATION_KEYS = {
     "evidence_refs",
 }
 TOP_LEVEL_KEYS = {"schema_version", "document_id", "patient", "observations", "unresolved_items"}
+OPTIONAL_TOP_LEVEL_KEYS = {"source_facts", "fact_decisions"}
 PATIENT_KEYS = {"match_status", "patient_id", "values"}
 EVIDENCE_KEYS = {"evidence_id", "field_path", "source_text", "page", "confidence"}
 RECORD_KEYS = {"temp_id", "state", "values", "resolutions", "evidence_refs"}
+OPTIONAL_RECORD_KEYS = {"extracted_values", "fact_dispositions"}
 
 LEGACY_COLLECTIONS = {
     "diagnosis_candidates": "diagnoses",
@@ -102,7 +105,7 @@ def is_canonical_draft(value):
 
 def _evidence_value(value, *, field_path, evidence, evidence_ids):
     """Strip evidence metadata while retaining a separately addressable reference."""
-    if isinstance(value, dict) and "value" in value:
+    if isinstance(value, dict) and "value" in value and set(value) <= {"value", "source_text", "page", "confidence", "start", "end"}:
         evidence_id = _temp_id("evidence")
         evidence.append({
             "evidence_id": evidence_id,
@@ -110,6 +113,7 @@ def _evidence_value(value, *, field_path, evidence, evidence_ids):
             "source_text": str(value.get("source_text") or ""),
             "page": value.get("page"),
             "confidence": value.get("confidence"),
+            "extracted_value": deepcopy(value.get("value")),
         })
         evidence_ids.append(evidence_id)
         return value.get("value")
@@ -127,7 +131,7 @@ def _evidence_value(value, *, field_path, evidence, evidence_ids):
     return value
 
 
-def _record_from_candidate(candidate, collection, index, observation):
+def _record_from_candidate(candidate, collection, index, observation, *, require_source_evidence=False):
     evidence_ids = []
     values = _evidence_value(
         candidate,
@@ -141,12 +145,64 @@ def _record_from_candidate(candidate, collection, index, observation):
     # canonical contract regenerates all option IDs in ``resolutions`` so IDs
     # can never be mistaken for extracted clinical values.
     values = {key: value for key, value in values.items() if not key.endswith("_match")}
+    original = deepcopy(values)
+    values, issues = normalize_aliases(collection, values)
+    definitions = fields(collection)
+    from prescriptions.services.field_contract import ALIASES
+    if require_source_evidence and isinstance(candidate, dict) and not {"source_text", "page", "confidence"} <= set(candidate):
+        for key, raw_value in candidate.items():
+            canonical = ALIASES.get(collection, {}).get(key, key)
+            if canonical in definitions and raw_value not in (None, "", []) and not isinstance(raw_value, dict):
+                issues.append({"code": "unsupported_evidence", "field": canonical, "reason": "The returned value has no field-level source evidence; verify it explicitly.", "raw_value": deepcopy(raw_value)})
+                values[canonical] = None
+    dispositions = []
+    for key, value in original.items():
+        from prescriptions.services.field_contract import ALIASES
+        canonical = ALIASES.get(collection, {}).get(key, key)
+        disposition = "mapped" if canonical in definitions else "unresolved"
+        dispositions.append({"field": key, "canonical_field": canonical, "raw_value": deepcopy(value), "disposition": disposition})
+    for key, value in values.items():
+        if key not in definitions and value not in (None, "", []):
+            issues.append({"code": "unsupported_field", "field": key, "reason": "This extracted fact has no supported field destination.", "raw_value": value})
+        elif key in definitions and value not in (None, "", []):
+            definition = definitions[key]
+            if definition.get("persisted") is False:
+                issues.append({"code": "unsupported_destination", "field": key, "reason": "This form field has no canonical persistence destination.", "raw_value": value})
+            kind = definition.get("type")
+            valid = True
+            if kind in {"date", "datetime-local"}:
+                try:
+                    _validate_date(value, key, date_time=kind == "datetime-local")
+                except ValidationError:
+                    valid = False
+            elif kind == "number":
+                from decimal import Decimal, InvalidOperation
+                try:
+                    valid = not isinstance(value, bool) and Decimal(str(value)).is_finite()
+                except (InvalidOperation, ValueError):
+                    valid = False
+            elif kind == "boolean":
+                valid = isinstance(value, bool)
+            elif definition.get("choices"):
+                valid = value in [choice["value"] for choice in definition["choices"]]
+            if not valid:
+                issues.append({"code": "invalid_field_value", "field": key, "reason": "Extracted value requires explicit correction before canonical storage.", "raw_value": value})
+                values[key] = None
+    record_id = _temp_id(collection.rstrip("s"))
+    for issue in issues:
+        observation.setdefault("_mapping_issues", []).append({"type": issue["code"], **issue, "collection": collection, "record_index": index,
+            "record_temp_id": record_id, "observation_temp_id": observation["temp_id"]})
+        for disposition in dispositions:
+            if disposition["canonical_field"] == issue["field"]:
+                disposition["disposition"] = "unresolved"
     return {
-        "temp_id": _temp_id(collection.rstrip("s")),
-        "state": "extracted",
+        "temp_id": record_id,
+        "state": "unresolved" if issues else "extracted",
         "values": values,
         "resolutions": {},
         "evidence_refs": evidence_ids,
+        "extracted_values": normalize_aliases(collection, original)[0],
+        "fact_dispositions": dispositions,
     }
 
 
@@ -156,9 +212,10 @@ def _patient_values(source, *, allow_identifier_fields=True):
     for key, value in patient.items():
         if key in {"identifiers", "phones", "match_candidates"}:
             continue
-        if not allow_identifier_fields and key in {"registration_no", "patient_id"}:
+        from prescriptions.services.field_contract import ALIASES
+        if not allow_identifier_fields and ALIASES.get("patient", {}).get(key, key) in {"registration_no", "patient_id"}:
             continue
-        if isinstance(value, dict) and "value" in value:
+        if isinstance(value, dict) and "value" in value and set(value) <= {"value", "source_text", "page", "confidence", "start", "end"}:
             values[key] = value.get("value")
         elif not isinstance(value, (dict, list)):
             values[key] = value
@@ -173,7 +230,7 @@ def _patient_values(source, *, allow_identifier_fields=True):
     if phones:
         first = phones[0]
         values.setdefault("phone", first.get("value") if isinstance(first, dict) else first)
-    return values
+    return normalize_aliases("patient", values)[0]
 
 
 def _append_extractor_observations(draft, extracted):
@@ -210,7 +267,7 @@ def _append_extractor_observations(draft, extracted):
             if isinstance(candidates, list):
                 recognized = recognized or bool(candidates)
                 observation[collection].extend(
-                    _record_from_candidate(candidate, collection, candidate_index, observation)
+                    _record_from_candidate(candidate, collection, candidate_index, observation, require_source_evidence=True)
                     for candidate_index, candidate in enumerate(candidates)
                 )
         evidence = item.get("evidence")
@@ -224,6 +281,7 @@ def _append_extractor_observations(draft, extracted):
                 "reason": "Extractor fields require human placement in a supported record section.",
                 "raw_value": unknown or {"event_type": item.get("event_type")},
             })
+        draft["unresolved_items"].extend(observation.pop("_mapping_issues", []))
         draft["observations"].append(observation)
 
 
@@ -275,6 +333,7 @@ def normalize_extraction(source, *, document_id, linked_patient_id=None):
             legacy_observation[collection].append(_record_from_candidate(candidate, collection, index, legacy_observation))
 
     if any(legacy_observation[name] for name in COLLECTIONS) or legacy_observation["evidence_refs"]:
+        draft["unresolved_items"].extend(legacy_observation.pop("_mapping_issues", []))
         draft["observations"].append(legacy_observation)
 
     for item in source.get("unresolved_items", []) if isinstance(source.get("unresolved_items"), list) else []:
@@ -284,6 +343,11 @@ def normalize_extraction(source, *, document_id, linked_patient_id=None):
 
     if not draft["observations"]:
         draft["observations"].append(empty_observation(temp_id="observation-1"))
+    if gemini:
+        from .record_reconciliation import reconcile_extracted_records
+        reconcile_extracted_records(draft)
+        from .fact_ledger import source_fact_ledger
+        draft["source_facts"] = source_fact_ledger(gemini, draft)
     validate_draft(draft, document_id=document_id, check_database=False)
     return draft
 
@@ -303,8 +367,20 @@ def validate_draft(draft, *, document_id=None, check_database=True):
     """Strictly validate the shared draft contract and return it unchanged."""
     if not isinstance(draft, dict):
         raise ValidationError("The intake draft must be an object.")
-    if set(draft) != TOP_LEVEL_KEYS:
+    if not TOP_LEVEL_KEYS <= set(draft) or set(draft) - TOP_LEVEL_KEYS - OPTIONAL_TOP_LEVEL_KEYS:
         raise ValidationError({"draft": f"Expected exactly these keys: {', '.join(sorted(TOP_LEVEL_KEYS))}."})
+    if "source_facts" in draft:
+        facts = draft["source_facts"]
+        if not isinstance(facts, list):
+            raise ValidationError({"source_facts": "Must be an array."})
+        identities = set()
+        for fact in facts:
+            if (not isinstance(fact, dict) or not isinstance(fact.get("fact_id"), str) or not fact["fact_id"]
+                    or fact["fact_id"] in identities or not isinstance(fact.get("source_path"), str)
+                    or "raw_value" not in fact or fact.get("disposition") not in {"mapped", "unresolved", "excluded"}
+                    or (fact["disposition"] != "mapped" and not fact.get("reason"))):
+                raise ValidationError({"source_facts": "Every fact requires a unique identity, original value and explained disposition."})
+            identities.add(fact["fact_id"])
     if draft.get("schema_version") != SCHEMA_VERSION:
         raise ValidationError({"schema_version": f"Only schema version {SCHEMA_VERSION} is supported."})
     if not isinstance(draft.get("document_id"), int) or isinstance(draft.get("document_id"), bool):
@@ -356,7 +432,7 @@ def validate_draft(draft, *, document_id=None, check_database=True):
         evidence_ids = set()
         for evidence_index, item in enumerate(evidence):
             path = f"{prefix}.evidence_refs.{evidence_index}"
-            if not isinstance(item, dict) or set(item) != EVIDENCE_KEYS:
+            if not isinstance(item, dict) or not EVIDENCE_KEYS <= set(item) or set(item) - EVIDENCE_KEYS - {"extracted_value"}:
                 raise ValidationError({path: f"Expected exactly these keys: {', '.join(sorted(EVIDENCE_KEYS))}."})
             evidence_id = item.get("evidence_id")
             if not isinstance(evidence_id, str) or not evidence_id or evidence_id in evidence_ids:
@@ -375,7 +451,7 @@ def validate_draft(draft, *, document_id=None, check_database=True):
                 raise ValidationError({f"{prefix}.{collection}": "Must be an array."})
             for record_index, record in enumerate(records):
                 path = f"{prefix}.{collection}.{record_index}"
-                if not isinstance(record, dict) or set(record) != RECORD_KEYS:
+                if not isinstance(record, dict) or not RECORD_KEYS <= set(record) or set(record) - RECORD_KEYS - OPTIONAL_RECORD_KEYS:
                     raise ValidationError({path: f"Expected exactly these keys: {', '.join(sorted(RECORD_KEYS))}."})
                 record_id = record.get("temp_id")
                 if not isinstance(record_id, str) or not record_id.strip() or record_id in all_temp_ids:
@@ -385,7 +461,13 @@ def validate_draft(draft, *, document_id=None, check_database=True):
                     raise ValidationError({f"{path}.state": "Must be extracted, edited, unresolved, or validated."})
                 if not isinstance(record.get("values"), dict) or not isinstance(record.get("resolutions"), dict):
                     raise ValidationError({path: "Values and resolutions must be objects."})
+                if "extracted_values" in record and not isinstance(record["extracted_values"], dict):
+                    raise ValidationError({path: "Extracted values must be an object."})
+                if "fact_dispositions" in record and (not isinstance(record["fact_dispositions"], list) or any(not isinstance(item, dict) or item.get("disposition") not in {"mapped", "unresolved", "excluded"} for item in record["fact_dispositions"])):
+                    raise ValidationError({path: "Invalid fact dispositions."})
                 refs = record.get("evidence_refs")
                 if not isinstance(refs, list) or any(not isinstance(ref, str) or ref not in evidence_ids for ref in refs):
                     raise ValidationError({f"{path}.evidence_refs": "Every reference must identify evidence in the same observation."})
+    from .fact_decisions import validate_fact_decisions
+    validate_fact_decisions(draft)
     return draft

@@ -8,6 +8,8 @@ from django.conf import settings
 from django.utils import timezone
 
 from prescriptions.models import LLMInvocation
+from prescriptions.services.provider_data_policy import require_approved_gemini_input, ProviderDataPolicyError
+from prescriptions.services.field_contract import fields, ALIASES, extraction_schema, contract
 
 
 logger = logging.getLogger("celery.tasks")
@@ -15,7 +17,7 @@ logger = logging.getLogger("celery.tasks")
 
 SCHEMA_VERSION = "1"
 
-PATIENT_FIELDS = {"name", "age", "gender", "patient_identifier", "registration_no", "phone"}
+PATIENT_FIELDS = set(fields("patient")) | set(ALIASES["patient"])
 CLINICAL_SOURCE_SIGNAL = re.compile(
     r"\b(diagnosis|carcinoma|adenocarcinoma|small cell|histopathology|chemotherapy|radiotherapy|metasta(?:sis|tic)|treatment)\b",
     re.IGNORECASE,
@@ -30,8 +32,41 @@ class GeminiRateLimitError(RuntimeError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class GeminiTransientServiceError(GeminiRateLimitError):
+    """Bounded Celery retry using the existing delayed provider category."""
+
+
+class GeminiPermanentProviderError(RuntimeError):
+    def __init__(self, category):
+        self.category = category
+        super().__init__(f"Gemini provider unavailable: {category}.")
+
+
 class GeminiStructuredOutputError(ValueError):
     """The provider answered, but did not honour the structured-output contract."""
+
+    def __init__(self, message, *, category="schema_invalid"):
+        super().__init__(message)
+        self.category = category
+
+
+def validate_provider_completion(response):
+    """Reject partial/blocked answers even when their text happens to be JSON."""
+    def get(value, key, default=None):
+        return value.get(key, default) if isinstance(value, dict) else getattr(value, key, default)
+    feedback = get(response, "prompt_feedback") or get(response, "promptFeedback")
+    blocked = get(feedback, "block_reason") or get(feedback, "blockReason")
+    if blocked and str(getattr(blocked, "name", blocked)).upper() not in {"0", "BLOCK_REASON_UNSPECIFIED"}:
+        raise GeminiStructuredOutputError("Gemini blocked this input.", category="provider_blocked")
+    for candidate in get(response, "candidates", []) or []:
+        reason = get(candidate, "finish_reason") or get(candidate, "finishReason")
+        reason = str(getattr(reason, "name", reason) or "").upper().split(".")[-1]
+        if reason in {"MAX_TOKENS", "2"}:
+            raise GeminiStructuredOutputError("Gemini output was truncated by its token limit.", category="truncated")
+        if reason in {"SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "3", "4", "7", "8", "9"}:
+            raise GeminiStructuredOutputError("Gemini blocked structured output.", category="provider_blocked")
+        if reason not in {"", "STOP", "1", "FINISH_REASON_UNSPECIFIED", "0"}:
+            raise GeminiStructuredOutputError("Gemini did not complete its structured output.", category="incomplete")
 
 
 def gemini_retry_after_seconds(error):
@@ -74,8 +109,8 @@ pathological_responses, progression_records, and survival_records. Use page numb
 the source. Preserve wording faithfully. Never return option_id, database_id, or pk fields, and
 never return prose outside JSON.
 
-patient is an object, never one evidence value. Its only permitted keys are name, age,
-gender, patient_identifier, registration_no, and phone. Each populated patient key must use
+patient is an object, never one evidence value. Use the patient field names in the
+provided response schema (sex rather than gender). Each populated patient key must use
 the same value/source_text/page/confidence evidence object. Leave a patient key absent when
 the document does not support it.
 
@@ -105,6 +140,14 @@ When the source contains a diagnosis, pathology, treatment, radiotherapy, or met
 observations must include the supported clinical records. Do not return a demographics-only
 response for a clinical prescription; if a clinical fact cannot be extracted, describe why in
 unresolved_items."""
+
+# Gemini may reject a large nested response schema despite accepting JSON mode.
+# Supply the same vocabulary in the audited instruction; validate returned data locally.
+SYSTEM_INSTRUCTION += "\nActual form field contract (use these field names; retain evidence wrappers):\n" + json.dumps(
+    {name: {key: {"type": field.get("type"), "choices": field.get("choices", [])} for key, field in fields(name).items() if not field.get("readOnly")}
+     for name in ["patient", "observation", "anthropometry", *contract()["collections"]]}, separators=(",", ":"))
+
+SYSTEM_INSTRUCTION += "\nEmit compact valid JSON: double-quote every key, escape quotation marks inside strings, and never use comments, bullet lines, ellipses or markdown. Omit absent/null fields. Quote only the short supporting source passage, not entire pages. Represent each documented event once.\n"
 
 QUALITY_RECOVERY_INSTRUCTION = """
 This is a recovery extraction because the previous result was invalid or omitted
@@ -182,6 +225,27 @@ def validate_extraction(data):
                 reject_database_ids(item)
 
     reject_database_ids(data)
+    for observation in data["observations"]:
+        for collection in contract()["collections"]:
+            if collection not in observation:
+                continue
+            records = observation[collection]
+            if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+                raise ValueError("Clinical record collections must contain objects.")
+            for record in records:
+                for field_name, value in record.items():
+                    # Scalar facts without wrappers are retained for exception review.
+                    # Mapping quarantines these values; they cannot become accepted fields.
+                    if value is None or isinstance(value, (str, int, float, bool)):
+                        import math
+                        if not isinstance(value, float) or math.isfinite(value):
+                            continue
+                    if not isinstance(value, dict) or not {"value", "source_text", "page", "confidence"} <= set(value):
+                        raise ValueError("Each extracted clinical field must contain source evidence.")
+                    if not isinstance(value["source_text"], str) or not isinstance(value["page"], int) or isinstance(value["page"], bool) or value["page"] < 1:
+                        raise ValueError("Clinical evidence has an invalid source or page.")
+                    if not isinstance(value["confidence"], (int, float)) or isinstance(value["confidence"], bool) or not 0 <= value["confidence"] <= 1:
+                        raise ValueError("Clinical evidence has an invalid confidence.")
     return {key: data[key] for key in ("patient", "observations", "unresolved_items", "warnings")}
 
 
@@ -261,6 +325,19 @@ def extract_structured_data(pages, *, extraction_run=None, quality_recovery=Fals
         _finish_invocation(invocation, status=LLMInvocation.Status.SKIPPED, error=f"Missing configuration: {', '.join(missing)}.")
         return data, "", "unconfigured", ""
 
+    try:
+        require_approved_gemini_input(contents)
+    except ProviderDataPolicyError as exc:
+        _finish_invocation(invocation, status=LLMInvocation.Status.SKIPPED, error=str(exc))
+        raise
+
+    from prescriptions.services.provider_budget import reserve_provider_budget, ProviderBudgetConfigurationError
+    try:
+        reserve_provider_budget([contents], system_instruction=system_instruction)
+    except (GeminiRateLimitError, ProviderBudgetConfigurationError) as exc:
+        _finish_invocation(invocation, status=LLMInvocation.Status.SKIPPED, error=f"Provider admission blocked: {exc}")
+        raise
+
     logger.info(
         "Gemini extraction request started document_id=%s pages=%s model=%s input_characters=%s",
         document_id,
@@ -273,7 +350,10 @@ def extract_structured_data(pages, *, extraction_run=None, quality_recovery=Fals
     from google.genai import types
 
     try:
-        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        client_options = {}
+        if settings.PRESCRIPTION_DOCUMENT_BUDGET_ENABLED:
+            client_options["http_options"] = types.HttpOptions(timeout=max(1, settings.PRESCRIPTION_DOCUMENT_SECONDS) * 1000)
+        client = genai.Client(api_key=settings.GOOGLE_API_KEY, **client_options)
         response = client.models.generate_content(
             model=settings.PRESCRIPTION_EXTRACTION_MODEL,
             contents=contents,
@@ -282,21 +362,31 @@ def extract_structured_data(pages, *, extraction_run=None, quality_recovery=Fals
                 response_mime_type="application/json",
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 temperature=0,
+                max_output_tokens=settings.PRESCRIPTION_PROVIDER_MAX_OUTPUT_TOKENS if (settings.PRESCRIPTION_PROVIDER_BUDGET_ENABLED or settings.PRESCRIPTION_DOCUMENT_BUDGET_ENABLED) and settings.PRESCRIPTION_PROVIDER_MAX_OUTPUT_TOKENS > 0 else None,
             ),
         )
     except Exception as exc:
         # Do not log prompt content, response content, credentials, or patient
         # data.  The exception trace and identifiers are enough to diagnose a
         # provider outage or configuration problem.
-        logger.exception(
+        logger.error(
             "Gemini extraction request failed document_id=%s pages=%s model=%s",
             document_id,
             len(page_list),
             settings.PRESCRIPTION_EXTRACTION_MODEL,
         )
-        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, error="Gemini provider request failed; see Celery log for traceback.")
-        if is_gemini_rate_limit(exc):
-            raise GeminiRateLimitError(retry_after_seconds=gemini_retry_after_seconds(exc)) from exc
+        from .provider_failures import classify_provider_failure
+        failure = classify_provider_failure(exc)
+        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, error=f"provider_failure:{failure.category}")
+        if failure.category == "transient_service":
+            raise GeminiTransientServiceError(retry_after_seconds=failure.retry_after_seconds) from None
+        if failure.category == "quota" or (failure.category == "unknown" and is_gemini_rate_limit(exc)):
+            raise GeminiRateLimitError(retry_after_seconds=failure.retry_after_seconds or gemini_retry_after_seconds(exc)) from None
+        raise GeminiPermanentProviderError(failure.category) from None
+    try:
+        validate_provider_completion(response)
+    except GeminiStructuredOutputError as exc:
+        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, output_text=response.text or "", response=response, error=f"structured_output:{exc.category}")
         raise
     raw_response = response.text or ""
     if not raw_response:
@@ -307,11 +397,11 @@ def extract_structured_data(pages, *, extraction_run=None, quality_recovery=Fals
             settings.PRESCRIPTION_EXTRACTION_MODEL,
         )
         _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, response=response, error="Gemini returned an empty response.")
-        raise GeminiStructuredOutputError("Gemini returned an empty structured response.")
+        raise GeminiStructuredOutputError("Gemini returned an empty structured response.", category="empty")
     try:
         data = json.loads(raw_response)
     except json.JSONDecodeError as exc:
-        logger.exception(
+        logger.error(
             "Gemini extraction returned invalid JSON document_id=%s pages=%s model=%s response_characters=%s",
             document_id,
             len(page_list),
@@ -319,12 +409,12 @@ def extract_structured_data(pages, *, extraction_run=None, quality_recovery=Fals
             len(raw_response),
         )
         _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, output_text=raw_response, response=response, error="Gemini returned invalid JSON.")
-        raise GeminiStructuredOutputError("Gemini returned invalid structured JSON.") from exc
+        raise GeminiStructuredOutputError("Gemini returned invalid structured JSON.", category="malformed_json") from None
     try:
         validated = validate_extraction(data)
     except Exception as exc:
-        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, output_text=raw_response, response=response, error=str(exc))
-        raise GeminiStructuredOutputError("Gemini returned JSON that did not match the extraction contract.") from exc
+        _finish_invocation(invocation, status=LLMInvocation.Status.FAILED, output_text=raw_response, response=response, error="structured_output:invalid_contract")
+        raise GeminiStructuredOutputError("Gemini returned JSON that did not match the extraction contract.") from None
     if source_has_clinical_signal(page_list) and not has_clinical_observation(validated):
         _finish_invocation(
             invocation,

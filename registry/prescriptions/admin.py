@@ -2,7 +2,7 @@ from django.contrib import admin
 
 from .models import ExtractionIssue, ExtractionRun, LLMInvocation, PrescriptionDocument, PrescriptionDrugAlias, PrescriptionPage, PrescriptionReview, PrescriptionReviewChange
 
-admin.site.register((PrescriptionPage, ExtractionRun, ExtractionIssue, PrescriptionDrugAlias, PrescriptionReview, PrescriptionReviewChange))
+admin.site.register((PrescriptionPage, ExtractionRun, ExtractionIssue, PrescriptionReview, PrescriptionReviewChange))
 
 
 @admin.register(PrescriptionDocument)
@@ -55,3 +55,76 @@ class LLMInvocationAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+from .models import PrescriptionWorkflowRun, PrescriptionWorkflowCheckpoint, PrescriptionWorkflowWrite
+from .models import PrescriptionProviderBudget
+
+
+class ReadOnlyWorkflowAdmin(admin.ModelAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(PrescriptionProviderBudget)
+class PrescriptionProviderBudgetAdmin(ReadOnlyWorkflowAdmin):
+    list_display = ("scope_key", "model_name", "window_started_at", "requests_reserved", "token_units_reserved", "updated_at")
+    search_fields = ("scope_key", "model_name")
+
+
+@admin.register(PrescriptionWorkflowRun)
+class PrescriptionWorkflowRunAdmin(ReadOnlyWorkflowAdmin):
+    list_display = ("id", "document", "status", "lease_expires_at", "created_at")
+    list_filter = ("status",)
+    search_fields = ("=id", "=document__id", "document_sha256")
+
+
+@admin.register(PrescriptionWorkflowCheckpoint)
+class PrescriptionWorkflowCheckpointAdmin(ReadOnlyWorkflowAdmin):
+    list_display = ("run", "namespace", "checkpoint_id", "created_at")
+    search_fields = ("=run__id", "checkpoint_id")
+    exclude = ("payload", "metadata")
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields if field.name not in self.exclude)
+
+
+@admin.register(PrescriptionWorkflowWrite)
+class PrescriptionWorkflowWriteAdmin(ReadOnlyWorkflowAdmin):
+    list_display = ("run", "checkpoint_id", "task_id", "channel", "write_index")
+    search_fields = ("=run__id", "task_id", "channel")
+    exclude = ("payload",)
+
+    def get_readonly_fields(self, request, obj=None):
+        return tuple(field.name for field in self.model._meta.fields if field.name not in self.exclude)
+
+
+@admin.register(PrescriptionDrugAlias)
+class PrescriptionDrugAliasAdmin(admin.ModelAdmin):
+    list_display = ("alias", "drug", "approved_by", "approved_at")
+    search_fields = ("alias", "drug__name")
+    list_select_related = ("drug", "approved_by")
+    readonly_fields = ("approved_by", "approved_at")
+    actions = ("approve_aliases",)
+
+    def save_model(self, request, obj, form, change):
+        # New/changed proposals require a separate explicit approval action.
+        obj.approved_by = None
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Approve selected drug aliases for automatic matching", permissions=["change"])
+    def approve_aliases(self, request, queryset):
+        from django.core.exceptions import PermissionDenied
+        from django.utils import timezone
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        queryset.update(approved_by=request.user, approved_at=timezone.now())

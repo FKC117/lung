@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useState } from "react";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EntriesPatientMatch, LongitudinalIntakeDraft, PrescriptionObservationDraft } from "../../api";
@@ -15,6 +15,26 @@ afterEach(cleanup);
 const blankPatient: LongitudinalIntakeDraft["patient"] = { match_status: "unresolved", patient_id: null, values: {} };
 
 describe("shared intake form fields", () => {
+  it("clears stale thana when district changes and requires a district scope", () => {
+    const onChange = vi.fn();
+    render(<PatientFormSections patient={{ ...blankPatient, values: { district: 1, thana: 3 } }} catalog={{ districts: [{ id: 1, display: "Synthetic first" }, { id: 2, display: "Synthetic second" }], thanas: [{ id: 3, display: "Synthetic thana", district: 1 }] }} onChange={onChange} />);
+    const district = screen.getByRole("combobox", { name: "District" });
+    fireEvent.change(district, { target: { value: "2" } });
+    expect(onChange.mock.calls[0][0].values.thana).toBe("");
+    expect(onChange.mock.calls[0][0].values.district).toBe(2);
+  });
+  it("retains original patient, context and anthropometry values after canonical changes", () => {
+    render(<><PatientFormSections patient={{ ...blankPatient, values: { name: "Corrected synthetic" } }} extractedValues={{ name: { value: "Original synthetic", page: 1 }, sex: "Synthetic unavailable sex" }} onChange={() => undefined} />
+      <ObservationFormSections observation={{ ...emptyObservation(), prescription_date: "2020-01-02", anthropometry: { height_cm: 170, weight_kg: 70 } }}
+        extractedContext={{ prescription_date: { value: "2020-01-01" } }} extractedAnthropometry={{ weight_kg: { value: 60 }, bmi: 20.7 }} collections={[]} onChange={() => undefined} /></>);
+    expect(screen.getByRole("textbox", { name: /^Patient name/ })).toHaveProperty("value", "Corrected synthetic");
+    expect(screen.getByText(/Original synthetic/)).toBeTruthy();
+    expect(screen.getByText(/Synthetic unavailable sex/)).toBeTruthy();
+    expect(screen.getByText(/2020-01-01/)).toBeTruthy();
+    const originals = Array.from(document.querySelectorAll(".clinical-extracted-value")).map((item) => item.textContent);
+    expect(originals).toContain("Extracted value: 60");
+    expect(originals).toContain("Extracted value: 20.7");
+  });
   it("renders manual and prescription fields from the same authoritative definitions", () => {
     render(<><ClinicalSectionFields fields={observationFieldSchemas.histopathologies.fields} values={{}} binding="manual" onChange={() => undefined} /><ClinicalSectionFields fields={observationFieldSchemas.histopathologies.fields} values={{}} binding="canonical" onChange={() => undefined} /></>);
     const manual = document.querySelector('[data-clinical-schema-binding="manual"]');
@@ -88,7 +108,7 @@ describe("shared intake form fields", () => {
     const field = observationFieldSchemas.treatments.fields.filter((item) => item.key === "drug");
     const { rerender } = render(<ClinicalSectionFields fields={field} values={{ drug: "Tagrisso" }} onChange={() => undefined} />);
     expect(document.querySelector(".clinical-extracted-value")?.textContent).toContain("Tagrisso");
-    expect(screen.getByText("No options configured for this field.")).toBeTruthy();
+    expect(screen.getByText(/No configured options.*authorized catalog administrator.*treatment drugs/)).toBeTruthy();
     rerender(<ClinicalSectionFields fields={field} values={{ drug: "Tagrisso" }} catalog={{ "treatment-drugs": [{ id: 7, name: "Tagrisso", display: "Tagrisso" }] }} resolutions={{ drug: { status: "resolved", resource: "treatment-drugs", raw_value: "Tagrisso", option_id: 7, match_method: "exact_name", candidates: [], reason: "" } }} onChange={() => undefined} />);
     expect(document.querySelector(".clinical-extracted-value")?.textContent).toContain("Tagrisso");
     expect(screen.getByRole("combobox")).toHaveProperty("value", "7");

@@ -1896,6 +1896,8 @@ export interface PrescriptionDraftRecord {
   temp_id: string;
   state: PrescriptionDraftState;
   values: Record<string, unknown>;
+  extracted_values?: Record<string, unknown>;
+  fact_dispositions?: Array<{ field: string; canonical_field: string; raw_value: unknown; disposition: "mapped" | "unresolved" | "excluded" }>;
   resolutions: Record<string, {
     status: "resolved" | "ambiguous" | "unresolved";
     resource: string;
@@ -1949,6 +1951,8 @@ export interface LongitudinalIntakeDraft extends Record<string, unknown> {
 
 export interface PrescriptionReview {
   id: number;
+  revision: number;
+  approved_revision: number | null;
   selected_patient: number | null;
   status: "draft" | "in_review" | "approved" | "rejected";
   reviewed_data: LongitudinalIntakeDraft;
@@ -2018,7 +2022,7 @@ export function startPrescriptionReview(documentId: number) {
 
 export function updatePrescriptionReview(
   documentId: number,
-  payload: Pick<Partial<PrescriptionReview>, "selected_patient" | "reviewed_data" | "notes">,
+  payload: Pick<Partial<PrescriptionReview>, "selected_patient" | "reviewed_data" | "notes"> & { expected_revision?: number },
 ) {
   return request<PrescriptionReview>(`/api/prescriptions/documents/${documentId}/review/`, {
     method: "PATCH",
@@ -2026,16 +2030,16 @@ export function updatePrescriptionReview(
   });
 }
 
-export function approvePrescriptionReview(documentId: number) {
+export function approvePrescriptionReview(documentId: number, expectedRevision?: number) {
   return request<PrescriptionReview>(
     `/api/prescriptions/documents/${documentId}/approve-review/`,
-    { method: "POST" },
+    { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) },
   );
 }
 
-export function publishPrescriptionReview(documentId: number) {
+export function publishPrescriptionReview(documentId: number, expectedRevision?: number) {
   return request<{ observation_ids: number[]; counts: Record<string, number | boolean> }>(
-    `/api/prescriptions/documents/${documentId}/publish/`, { method: "POST" },
+    `/api/prescriptions/documents/${documentId}/publish/`, { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) },
   );
 }
 
@@ -2066,4 +2070,23 @@ export function fetchPrescriptionEntryDraft(documentId: number) {
   return request<PrescriptionEntryDraft>(
     `/api/prescriptions/documents/${documentId}/entry-draft/`,
   );
+}
+
+
+export interface PrescriptionRepairProposal {
+  id: string;
+  collection: string;
+  record_id: string;
+  review_revision: number;
+  patches: Record<string, { value: string | number; page: number; source_text: string }>;
+}
+
+export function fetchPrescriptionRepairProposals(documentId: number) {
+  return request<{ revision: number; proposals: PrescriptionRepairProposal[] }>(`/api/prescriptions/documents/${documentId}/repair-proposals/`);
+}
+
+export function loadLatestPrescriptionExtraction(documentId: number, revision: number, extractionRunId: number) {
+  return request<PrescriptionReview>(`/api/prescriptions/documents/${documentId}/load-latest-extraction/`, {
+    method: "POST", body: JSON.stringify({ expected_revision: revision, extraction_run_id: extractionRunId }),
+  });
 }

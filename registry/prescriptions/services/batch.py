@@ -6,27 +6,35 @@ stores provider correlation data; completed output still goes through review.
 import hashlib
 import json
 import tempfile
+from copy import deepcopy
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
-from prescriptions.models import LLMInvocation, PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument
-from prescriptions.services.extraction import SYSTEM_INSTRUCTION, build_contents, validate_extraction
+from prescriptions.models import ExtractionRun, LLMInvocation, PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument
+from prescriptions.services.extraction import SYSTEM_INSTRUCTION, build_contents, validate_extraction, validate_provider_completion
+from prescriptions.services.field_contract import extraction_schema
 from prescriptions.services.intake_draft import build_intake_draft
+from prescriptions.services.provider_data_policy import require_approved_gemini_input
+from prescriptions.services.provider_failures import audit_failure_category
 
 
 def _request_for(document):
     pages = list(document.pages.order_by("page_number"))
     if not pages:
         raise ValueError(f"Document {document.pk} has no extracted pages.")
+    input_text = build_contents(pages)
+    require_approved_gemini_input(input_text)
     return {
         "key": f"prescription-{document.pk}-{document.sha256[:12]}",
         "request": {
-            "contents": [{"role": "user", "parts": [{"text": build_contents(pages)}]}],
+            "contents": [{"role": "user", "parts": [{"text": input_text}]}],
             "config": {
                 "system_instruction": SYSTEM_INSTRUCTION,
                 "response_mime_type": "application/json",
                 "temperature": 0,
+                **({"max_output_tokens": settings.PRESCRIPTION_PROVIDER_MAX_OUTPUT_TOKENS} if settings.PRESCRIPTION_PROVIDER_BUDGET_ENABLED and settings.PRESCRIPTION_PROVIDER_MAX_OUTPUT_TOKENS > 0 else {}),
             },
         },
     }
@@ -42,6 +50,10 @@ def create_batch_job(*, document_ids, user, display_name):
     )
     if len(documents) != len(set(document_ids)):
         raise ValueError("Every batch document must be ready for review with extracted pages.")
+    # Reject the entire batch before creating jobs/audits or uploading any text.
+    prepared_requests = {document.pk: _request_for(document) for document in documents}
+    from prescriptions.services.provider_budget import reserve_provider_budget
+    reserve_provider_budget([request["request"]["contents"][0]["parts"][0]["text"] for request in prepared_requests.values()], system_instruction=SYSTEM_INSTRUCTION)
     job = PrescriptionBatchJob.objects.create(
         display_name=display_name,
         model_name=settings.PRESCRIPTION_EXTRACTION_MODEL,
@@ -54,13 +66,13 @@ def create_batch_job(*, document_ids, user, display_name):
         request_inputs = {}
         items = []
         for document in documents:
-            request = _request_for(document)
+            request = prepared_requests[document.pk]
             serialized = json.dumps(request, separators=(",", ":"), ensure_ascii=False)
             rows.append(serialized)
             request_inputs[document.pk] = request["request"]["contents"][0]["parts"][0]["text"]
             items.append(PrescriptionBatchItem(
                 batch_job=job, document=document, request_key=request["key"],
-                input_sha256=hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+                input_sha256=hashlib.sha256(request_inputs[document.pk].encode("utf-8")).hexdigest(),
             ))
         PrescriptionBatchItem.objects.bulk_create(items)
         batch_items = {
@@ -103,14 +115,14 @@ def create_batch_job(*, document_ids, user, display_name):
         LLMInvocation.objects.filter(batch_item__batch_job=job).update(status=LLMInvocation.Status.RUNNING)
     except Exception as exc:
         job.status = PrescriptionBatchJob.Status.FAILED
-        job.error = str(exc)
+        job.error = f"Gemini batch submission failed [{audit_failure_category(exc)}]."
         job.save(update_fields=["status", "error", "updated_at"])
         LLMInvocation.objects.filter(batch_item__batch_job=job).update(
             status=LLMInvocation.Status.FAILED,
-            error="Gemini batch submission failed; see Celery log for traceback.",
+            error=job.error,
             completed_at=timezone.now(),
         )
-        raise
+        raise RuntimeError(job.error) from None
     return job
 
 
@@ -149,6 +161,61 @@ def _store_batch_invocation_result(item, response, *, output_text="", error="", 
     ])
 
 
+@transaction.atomic
+def import_batch_row(job, item_id, row):
+    """One atomic, replay-safe import; completed extraction evidence is immutable."""
+    item = PrescriptionBatchItem.objects.select_for_update().select_related("document").get(pk=item_id, batch_job=job)
+    if item.status in {PrescriptionBatchItem.Status.COMPLETED, PrescriptionBatchItem.Status.FAILED}:
+        return item
+    item.attempts += 1
+    provider_response = row.get("response", {})
+    if row.get("error"):
+        item.status = PrescriptionBatchItem.Status.FAILED
+        item.error = "Gemini batch item failed."
+        _store_batch_invocation_result(item, provider_response, error=item.error)
+    else:
+        raw = _response_text(provider_response)
+        item.raw_response = raw
+        try:
+            current_input = build_contents(list(item.document.pages.order_by("page_number")))
+            source_digest = hashlib.sha256(current_input.encode()).hexdigest()
+            invocation = item.llm_invocations.order_by("-id").first()
+            # Older submissions hashed the full request envelope on the item.
+            # Its immutable invocation still records the original source digest.
+            expected_digest = invocation.input_sha256 if invocation else item.input_sha256
+            if source_digest != expected_digest:
+                raise ValueError("Batch input pages changed after submission; create a new batch.")
+            validate_provider_completion(provider_response)
+            data = validate_extraction(json.loads(raw))
+            previous = item.document.extraction_runs.filter(status="completed").first()
+            if not previous:
+                raise ValueError("The batch source extraction is unavailable.")
+            structured = deepcopy(previous.structured_data)
+            structured.pop("canonical_draft", None)
+            structured["gemini_extraction"] = data
+            structured["gemini_status"] = "available"
+            structured.setdefault("warnings", []).extend(str(value) for value in data.get("warnings", []))
+            structured["batch_item_id"] = item.pk
+            structured["source_extraction_run_id"] = previous.pk
+            structured["canonical_draft"] = build_intake_draft(
+                structured, document_id=item.document_id, linked_patient_id=item.document.patient_id,
+                pages=list(item.document.pages.all()))
+            ExtractionRun.objects.create(
+                document=item.document, schema_version=previous.schema_version,
+                structured_data=structured, raw_response=raw, ai_model=job.model_name,
+                prompt_version=job.prompt_version, status=ExtractionRun.Status.COMPLETED,
+                completed_at=timezone.now())
+            item.status = PrescriptionBatchItem.Status.COMPLETED
+            _store_batch_invocation_result(item, provider_response, output_text=raw, succeeded=True)
+        except (ValueError, json.JSONDecodeError) as exc:
+            item.status = PrescriptionBatchItem.Status.FAILED
+            item.error = f"Invalid structured extraction [{audit_failure_category(exc)}]."
+            _store_batch_invocation_result(item, provider_response, output_text=raw, error=item.error)
+    item.completed_at = timezone.now()
+    item.save(update_fields=["status", "raw_response", "error", "attempts", "completed_at"])
+    return item
+
+
 def sync_batch_job(job):
     """Import completed batch output into review-only extraction runs."""
     if not job.provider_job_name:
@@ -164,7 +231,7 @@ def sync_batch_job(job):
         return job
     if state != "JOB_STATE_SUCCEEDED":
         job.status = PrescriptionBatchJob.Status.CANCELLED if state == "JOB_STATE_CANCELLED" else PrescriptionBatchJob.Status.FAILED
-        job.error = str(getattr(provider_job, "error", "Gemini batch did not succeed."))
+        job.error = "Gemini batch did not succeed [provider_batch_failure]."
         job.completed_at = timezone.now()
         job.save(update_fields=["status", "error", "completed_at", "updated_at"])
         return job
@@ -183,41 +250,12 @@ def sync_batch_job(job):
         item = items.get(row.get("key"))
         if not item:
             continue
-        item.attempts += 1
-        if row.get("error"):
-            item.status = PrescriptionBatchItem.Status.FAILED
-            item.error = json.dumps(row["error"])
-            _store_batch_invocation_result(item, row.get("response", {}), error="Gemini batch item failed.")
-        else:
-            provider_response = row.get("response", {})
-            raw = _response_text(provider_response)
-            item.raw_response = raw
-            try:
-                data = validate_extraction(json.loads(raw))
-                run = item.document.extraction_runs.filter(status="completed").first()
-                if run:
-                    structured = dict(run.structured_data)
-                    structured["gemini_extraction"] = data
-                    structured.setdefault("warnings", []).extend(str(value) for value in data.get("warnings", []))
-                    structured["canonical_draft"] = build_intake_draft(
-                        structured,
-                        document_id=item.document_id,
-                        linked_patient_id=item.document.patient_id,
-                    )
-                    run.structured_data = structured
-                    run.raw_response = raw
-                    run.ai_model = job.model_name
-                    run.prompt_version = job.prompt_version
-                    run.save(update_fields=["structured_data", "raw_response", "ai_model", "prompt_version"])
-                item.status = PrescriptionBatchItem.Status.COMPLETED
-                _store_batch_invocation_result(item, provider_response, output_text=raw, succeeded=True)
-            except (ValueError, json.JSONDecodeError) as exc:
-                item.status = PrescriptionBatchItem.Status.FAILED
-                item.error = f"Invalid structured extraction: {exc}"
-                _store_batch_invocation_result(item, provider_response, output_text=raw, error=item.error)
-        item.completed_at = timezone.now()
-        item.save(update_fields=["status", "raw_response", "error", "attempts", "completed_at"])
-    job.status = PrescriptionBatchJob.Status.COMPLETED
+        import_batch_row(job, item.pk, row)
+    for missing in job.items.filter(status=PrescriptionBatchItem.Status.QUEUED):
+        import_batch_row(job, missing.pk, {"error": "Provider output omitted this item."})
+    failed = job.items.filter(status=PrescriptionBatchItem.Status.FAILED).exists()
+    job.status = PrescriptionBatchJob.Status.FAILED if failed else PrescriptionBatchJob.Status.COMPLETED
+    job.error = "One or more batch items failed; inspect item errors." if failed else ""
     job.completed_at = timezone.now()
-    job.save(update_fields=["status", "completed_at", "updated_at"])
+    job.save(update_fields=["status", "error", "completed_at", "updated_at"])
     return job

@@ -1,0 +1,17 @@
+# Original provider fact accounting
+
+New Gemini drafts include an optional `source_facts` array. Existing schema-v1 drafts without the array remain valid. Each entry stores a stable source path, the exact original field value (including its evidence wrapper), an initial mapped/unresolved/excluded disposition, a reason where required, and available canonical/observation/record links.
+
+Accounting includes patient fields and identifiers, observation dates and context, anthropometry, clinical record fields, unsupported fields and provider metadata. Clinical unknowns remain unresolved. Only provider metadata such as warnings/schema version is excluded automatically, with an explicit explanation; this is not clinical exclusion by a reviewer. Extracted patient identifiers never become an automatic patient selection.
+
+The array is immutable through authenticated review updates. Canonical edits to names, dates or selected options do not rewrite it. The existing review JSON and extraction canonical draft store it; no parallel clinical persistence path or new database table is introduced. Source-evidence failures update the initial accounting during draft generation before it becomes reviewer evidence. Legacy drafts are not silently upgraded during user saves.
+
+Initial `mapped` means a supported field destination was found, not that a clinical fact is verified or a dropdown is resolved. Existing evidence, option, readiness, saved-revision approval and publication checks remain required. Per-fact reviewer decisions and final coverage reconciliation are checked on save and approval. Mapping is still not clinical verification and never authorizes automatic publication.
+
+Decisions are revisioned and audited through the existing authenticated review API. Patient/context exceptions and original form values remain visible. New extraction/replay preserves existing review evidence. Targeted repair proposals will require separate comparison and protection under P3.5.
+
+An optional `fact_decisions` array accepts reviewer decisions with `fact_id`, `action` (`reviewed` or `exclude`) and a nonblank `reason`. IDs must exist in the immutable ledger and appear at most once. Actual form controls use the existing authenticated draft save/revision path.
+
+Clinical record decisions are rechecked on save and in the shared publisher. Reviewed fields must be populated, supported, correctly typed and canonically resolved where applicable. Exclusion requires clearing any supported canonical value/selection first; explicitly excluded unsupported keys are removed from the canonical candidate, while original evidence remains. Only matching field-specific mapping/evidence issues are reconciled. Chronology, provider, patient and unrelated issues remain blocking.
+
+Removing a decision restores its unresolved clinical blocker. Approval independently requires decisions for original unresolved clinical facts, so deleting a displayed issue or decision cannot silently bypass coverage. Removed records and cleared initially mapped fields require explicit exclusions. Patient, observation-context, anthropometry and unsupported root facts participate in final coverage. Provider identifiers can be excluded with a reason but cannot become an automatic patient association or replace deterministic identity. Checked supported context values reconcile only their own issues using stable observation identity. No unrelated chronology/provider blocker is waived.

@@ -2,38 +2,31 @@ import { useState } from "react";
 import { Search } from "lucide-react";
 import { fetchEntriesPatients, type EntriesPatientMatch, type EntryOption, type LongitudinalIntakeDraft } from "../../api";
 import { IntakeSelectField, IntakeTextField } from "./SharedIntakeFields";
+import { patientFieldSchema } from "./observationFieldSchema";
 import { applyPatientMatch } from "./patientMatching";
+import { originalValueText } from "./sourceFacts";
 
 type Catalog = Record<string, EntryOption[]>;
 type PatientDraft = LongitudinalIntakeDraft["patient"];
 type SearchPatients = (query: string) => Promise<{ results: EntriesPatientMatch[] }>;
 
-const fields: Array<{ key: string; label: string; type?: string; resource?: string }> = [
-  { key: "patient_id", label: "Registry ID" }, { key: "name", label: "Patient name" },
-  { key: "registration_no", label: "Registration no." }, { key: "phone", label: "Mobile no." },
-  { key: "email", label: "Email", type: "email" }, { key: "nid", label: "NID" },
-  { key: "passport", label: "Passport" }, { key: "date_of_birth", label: "Date of birth", type: "date" },
-  { key: "age", label: "Age", type: "number" }, { key: "sex", label: "Sex", resource: "sexes" },
-  { key: "district", label: "District", resource: "districts" }, { key: "thana", label: "Thana", resource: "thanas" },
-  { key: "blood_group", label: "Blood group", resource: "blood-groups" },
-  { key: "economic_status", label: "Economic status", resource: "economic-statuses" },
-  { key: "type_of_patient", label: "Patient type", resource: "patient-types" }, { key: "area", label: "Area" },
-];
+const fields = patientFieldSchema;
 
 export interface PatientFormSectionsProps {
   patient: PatientDraft;
   catalog?: Catalog;
   disabled?: boolean;
+  extractedValues?: Record<string, unknown>;
   onChange: (patient: PatientDraft) => void;
   searchPatients?: SearchPatients;
 }
 
-export function PatientFormSections({ patient, catalog = {}, disabled, onChange, searchPatients = (query) => fetchEntriesPatients(query, 1, 8) }: PatientFormSectionsProps) {
+export function PatientFormSections({ patient, catalog = {}, disabled, extractedValues, onChange, searchPatients = (query) => fetchEntriesPatients(query, 1, 8) }: PatientFormSectionsProps) {
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<EntriesPatientMatch[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
-  const update = (key: string, value: unknown) => onChange({ ...patient, values: { ...patient.values, [key]: value } });
+  const update = (key: string, value: unknown) => onChange({ ...patient, values: { ...patient.values, [key]: value, ...(key === "district" ? { thana: "" } : {}) } });
   const runSearch = async () => {
     setSearching(true);
     setSearchError("");
@@ -56,11 +49,12 @@ export function PatientFormSections({ patient, catalog = {}, disabled, onChange,
     <div className="entry-grid">
       {fields.map((field) => {
         let options = catalog[field.resource ?? ""] ?? [];
-        if (field.key === "thana" && patient.values.district) options = options.filter((option) => String(option.district) === String(patient.values.district));
+        if (field.key === "thana") options = typeof patient.values.district === "number" ? options.filter((option) => String(option.district) === String(patient.values.district)) : [];
         const value = patient.values[field.key] ?? "";
+        const evidence = extractedValues && field.key in extractedValues ? <p className="entry-field-help clinical-extracted-value"><strong>Extracted value:</strong> {originalValueText(extractedValues[field.key])}</p> : undefined;
         return field.resource
-          ? <IntakeSelectField key={field.key} label={field.label} value={String(value)} options={options} disabled={disabled} onChange={(selected, option) => update(field.key, option ? option.id : selected)} />
-          : <IntakeTextField key={field.key} label={field.label} type={field.type} value={String(value)} disabled={disabled} onChange={(next) => update(field.key, next)} />;
+          ? <IntakeSelectField key={field.key} label={field.label} evidence={evidence} value={String(value)} options={options} disabled={disabled} onChange={(selected, option) => update(field.key, option ? option.id : selected)} />
+          : <IntakeTextField key={field.key} label={field.label} evidence={evidence} type={field.type} value={String(value)} disabled={disabled} onChange={(next) => update(field.key, next)} />;
       })}
     </div>
   </section>;

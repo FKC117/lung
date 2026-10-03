@@ -4,6 +4,7 @@ from rest_framework.reverse import reverse
 from records.models import Patient
 from .services.draft_schema import validate_draft
 from .services.option_resolver import validate_approval_readiness, validate_selected_resolutions
+from .services.draft_evidence import verify_review_evidence
 from .models import ExtractionIssue, ExtractionRun, PrescriptionBatchItem, PrescriptionBatchJob, PrescriptionDocument, PrescriptionPage, PrescriptionReview, PrescriptionReviewChange
 
 
@@ -54,23 +55,28 @@ class PrescriptionReviewSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PrescriptionReview
-        fields = ("id", "selected_patient", "status", "reviewed_data", "notes", "assigned_to", "reviewed_by", "reviewed_at", "published_at", "published_by", "created_at", "updated_at", "changes")
+        fields = ("id", "selected_patient", "status", "reviewed_data", "revision", "approved_revision", "notes", "assigned_to", "reviewed_by", "reviewed_at", "published_at", "published_by", "created_at", "updated_at", "changes")
         read_only_fields = ("status", "assigned_to", "reviewed_by", "reviewed_at", "published_at", "published_by", "created_at", "updated_at", "changes")
 
 
 class PrescriptionReviewUpdateSerializer(serializers.Serializer):
+    expected_revision = serializers.IntegerField(required=False, min_value=1)
     selected_patient = serializers.PrimaryKeyRelatedField(queryset=Patient.objects.all(), required=False, allow_null=True)
     reviewed_data = serializers.JSONField(required=False)
     notes = serializers.CharField(required=False, allow_blank=True)
 
     def validate_reviewed_data(self, value):
         try:
+            if self.context.get("previous_draft"):
+                verify_review_evidence(self.context["previous_draft"], value)
             validate_draft(
                 value,
                 document_id=self.context.get("document_id"),
                 check_database=True,
             )
             validate_selected_resolutions(value)
+            from .services.fact_decisions import reconcile_fact_decisions
+            value = reconcile_fact_decisions(value)
             if self.context.get("approval"):
                 validate_approval_readiness(value)
         except Exception as exc:

@@ -51,6 +51,8 @@ Nginx or Apache rule.
 
 ## Gemini free-tier extraction worker
 
+Before enabling outbound Gemini traffic, configure the [provider data policy](../docs/prescription-provider-data-policy.md). Transmission defaults to disabled. The explicit enabled mode supports owner-selected real-prescription testing; approved_non_sensitive separately supports reviewed exact-input fixtures. Configuring an API key alone does not select a data policy. Apply the same environment to web and workers and restart both after configuration changes. Existing submitted provider batches are not canceled by this gate.
+
 Prescription extraction has its own Celery queue, `prescription_extraction`.
 Run exactly one worker for that queue while the project uses Gemini's free tier:
 
@@ -74,3 +76,17 @@ python.exe -m celery -A registry worker --loglevel=INFO --pool=solo --concurrenc
 The queue name, rate limit, retry count, and backoff are environment settings.
 Set them according to the active limits shown for this project in Google AI
 Studio; do not hard-code a provider quota into application code.
+# Shared prescription provider admission
+
+Apply `prescriptions.0010_prescriptionproviderbudget` before enabling the shared
+admission guard. Configure project/model limits explicitly; do not infer them
+from a free-tier label. See [provider budget runbook](../docs/prescription-provider-budget.md).
+Keep provider data-policy approval separate from budget configuration.
+
+## Local Windows startup and verification
+
+From D:\Lung, run `./deployment/start-prescription-worker.ps1` to retain the existing Ubuntu Redis runtime and start one hidden solo extraction worker. It checks for an existing consumer before starting another. Worker logs/process metadata are under the ignored registry/logs directory. The script does not install Redis, change network/security settings, modify credentials or configure billing.
+
+`./venv/Scripts/python.exe registry/manage.py verify_prescription_admission` checks configured request/token-unit/day denials in rolled-back synthetic scopes without provider calls. Local limits were supplied by the owner: 15 RPM, 500 RPD, 250K TPM; token admission intentionally overestimates usage. The daily counter resets at Pacific midnight. Restart web and workers after environment changes.
+
+For a stale processing row with newer completed evidence and no runnable workflow, use `reconcile_prescription_state DOCUMENT_ID` for a dry run. Only add `--apply` after inspection; the command protects recent processing and newer pending runs, retains original structured evidence, and does not alter a review or dispatch a provider call.

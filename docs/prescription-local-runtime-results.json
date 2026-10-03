@@ -1,0 +1,11 @@
+{
+  "extraction_workers": 1,
+  "minute_requests": 15,
+  "daily_requests": 500,
+  "minute_token_units": 250000,
+  "output_cap": 32768,
+  "quota_source": "owner-reported AI Studio limits",
+  "token_accounting": "conservative admission units",
+  "frontend_status": 200,
+  "unauthenticated_backend_status": 403
+}

@@ -174,7 +174,7 @@ def _attrs(values, record, collection, plain, option_fields):
 def _persist_record(collection, values, record, observation, courses, delayed, path, context):
     def child(instance, child_path):
         item = _save(instance, child_path, context)
-        _provenance(item, context["review"], context["run"], child_path, record.get("evidence_refs", []), {}, context["user"])
+        _provenance(item, context["review"], context["run"], child_path, record.get("evidence_refs", []), context.get("evidence", {}), context["user"])
         return item
     if collection == "comorbidities": return _save(PatientComorbidity(observation=observation, **_attrs(values, record, collection, {"diagnosed_on", "is_active", "notes"}, {"comorbidity"})), path, context)
     if collection == "diagnoses":
@@ -189,8 +189,22 @@ def _persist_record(collection, values, record, observation, courses, delayed, p
         return _save(model(observation=observation, **_attrs(values, record, collection, {"staged_on", "notes"}, {"t", "n", "m", "stage"})), path, context)
     if collection == "cancer_markers": return _save(CancerMarkerResult(observation=observation, **_attrs(values, record, collection, {"tested_on", "value", "notes"}, {"marker"})), path, context)
     if collection == "treatments":
+        flat_administration_fields = {"drug", "administered_on", "cycle_number", "day_number", "dose", "dose_unit", "administration_status", "administration_notes"}
+        has_flat_administration = any(values.get(key) not in (None, "") for key in flat_administration_fields)
+        if has_flat_administration and values.get("administrations"):
+            raise ValidationError({path: "Use either flat administration fields or nested administrations, not both."})
+        if has_flat_administration and values.get("drug") in (None, ""):
+            raise ValidationError({path: "Administration details require an explicitly selected drug."})
         item = _save(TreatmentCourse(observation=observation, **_attrs(values, record, collection, {"started_on", "ended_on", "status", "reason_for_stopping", "notes"}, {"modality", "line_of_treatment", "protocol"})), path, context)
         courses[record["temp_id"]] = item
+        if has_flat_administration:
+            administration_values = {**values}
+            for source, target in (("administration_status", "status"), ("administration_notes", "notes")):
+                administration_values.pop(target, None)
+                if values.get(source) not in (None, ""):
+                    administration_values[target] = values[source]
+            attrs = _attrs(administration_values, record, collection, {"administered_on", "cycle_number", "day_number", "dose", "dose_unit", "status", "notes"}, {"drug"})
+            child(TreatmentAdministration(treatment_course=item, observation=observation, **attrs), f"{path}.administration")
         for admin in values.get("administrations", []):
             if admin.get("drug"):
                 admin_attrs = _plain(admin, {"administered_on", "cycle_number", "day_number", "dose", "dose_unit", "status", "notes"})
@@ -222,6 +236,7 @@ def _persist_observation(data, index, patient, review, context):
         if existing:
             return existing.observation
     evidence = {item["evidence_id"]: item for item in data.get("evidence_refs", [])}
+    context = {**context, "evidence": evidence}
     source_note = f"Published from prescription review {review.pk}" if review else "Created from manual New Entry"
     is_published = context["observation_status"] == ClinicalObservation.Status.PUBLISHED
     observation = _save(ClinicalObservation(patient=patient, observed_at=_datetime(data.get("observed_at")), prescription_date=_date(data.get("prescription_date")), status=context["observation_status"], published_at=timezone.now() if is_published else None, published_by=context["user"] if is_published else None, clinical_notes=f"{source_note} ({data.get('temporal_context', 'unknown')})."), f"observations.{index}", context)
@@ -243,6 +258,8 @@ def _persist_observation(data, index, patient, review, context):
             item = _persist_record(collection, record.get("values", {}), record, observation, courses, delayed, path, context)
             if item is not None: _record_provenance(item, review, context["run"], path, record, evidence, context["user"])
     for collection, values, record, path in delayed:
+        if not values.get("treatment_temp_id") and len(courses) > 1:
+            raise ValidationError({path: "Select an explicit treatment course when this observation contains multiple courses."})
         course = courses.get(values.get("treatment_temp_id")) if values.get("treatment_temp_id") else next(iter(courses.values()), None)
         if course is None: raise ValidationError({path: "This assessment requires a treatment course in the same observation."})
         model = {"recist_assessments": RECIST11Assessment, "irecist_assessments": IRECISTAssessment, "pathological_responses": PathologicalResponseAssessment}[collection]
@@ -256,6 +273,8 @@ def _persist_observation(data, index, patient, review, context):
 def persist_canonical_draft(draft, *, review=None, user, observation_status=ClinicalObservation.Status.PUBLISHED):
     """Shared validated persistence service. Any child failure rolls back all."""
     validate_draft(draft, document_id=review.document_id if review else None, check_database=True)
+    from .fact_decisions import reconcile_fact_decisions
+    draft = reconcile_fact_decisions(draft)
     validate_selected_resolutions(draft)
     if observation_status == ClinicalObservation.Status.PUBLISHED:
         validate_approval_readiness(draft)
@@ -273,6 +292,8 @@ def publish_review(review, user):
     if review.published_at:
         return list(ClinicalObservation.objects.filter(prescription_publication_mapping__review=review)), {"already_published": True}
     if review.status != PrescriptionReview.Status.APPROVED: raise ValidationError("Only approved reviews can be published.")
+    if review.approved_revision != review.revision:
+        raise ValidationError("Approval no longer applies to the current review revision.")
     patient, observations, counts = persist_canonical_draft(review.reviewed_data, review=review, user=user)
     review.published_at = timezone.now(); review.published_by = user; review.selected_patient = patient
     review.save(update_fields=["published_at", "published_by", "selected_patient", "updated_at"])

@@ -22,6 +22,21 @@ function draft(): LongitudinalIntakeDraft {
 }
 
 describe("longitudinal draft operations", () => {
+  it("preserves original facts and decisions through split, move and merge", () => {
+    const source = draft();
+    const original = { value: "Synthetic original", source_text: "Synthetic quote", page: 2 };
+    source.source_facts = [{ fact_id: "synthetic.fact", source_path: "observations.0.treatments.0.drug", raw_value: original, disposition: "unresolved", record_temp_id: "treatment-1" }];
+    source.fact_decisions = [{ fact_id: "synthetic.fact", action: "exclude", reason: "Synthetic duplicate" }];
+    source.observations[0].treatments[0].extracted_values = { drug: original };
+    const split = splitObservation(source, source.observations[0].temp_id, [{ collection: "treatments", tempId: "treatment-1" }]);
+    const moved = moveRecord(split, split.observations[2].temp_id, split.observations[1].temp_id, { collection: "treatments", tempId: "treatment-1" });
+    const merged = mergeObservations(moved, moved.observations[0].temp_id, moved.observations[1].temp_id);
+    for (const result of [split, moved, merged]) {
+      expect(result.source_facts).toEqual(source.source_facts);
+      expect(result.fact_decisions).toEqual(source.fact_decisions);
+      expect(result.observations.flatMap((item) => item.treatments)[0].extracted_values).toEqual({ drug: original });
+    }
+  });
   it("moves a record and its evidence without mutating the input", () => {
     const source = draft();
     const [first, second] = source.observations;

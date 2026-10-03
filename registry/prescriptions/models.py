@@ -2,6 +2,7 @@ import hashlib
 
 from django.conf import settings
 from django.db import models
+from uuid import uuid4
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 
@@ -211,6 +212,8 @@ class PrescriptionReview(models.Model):
     selected_patient = models.ForeignKey("records.Patient", on_delete=models.SET_NULL, null=True, blank=True, related_name="prescription_reviews")
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT, db_index=True)
     reviewed_data = models.JSONField(default=dict, blank=True)
+    revision = models.PositiveIntegerField(default=1)
+    approved_revision = models.PositiveIntegerField(null=True, blank=True)
     notes = models.TextField(blank=True)
     assigned_to = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_prescription_reviews")
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="completed_prescription_reviews")
@@ -260,3 +263,56 @@ class RecordProvenance(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["content_type", "object_id"])]
+
+
+class PrescriptionWorkflowRun(models.Model):
+    """Orchestration identity; clinical values remain in the canonical review."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    document = models.ForeignKey(PrescriptionDocument, on_delete=models.CASCADE, related_name="workflow_runs")
+    document_sha256 = models.CharField(max_length=64)
+    versions = models.JSONField(default=dict)
+    status = models.CharField(max_length=24, default="queued", db_index=True)
+    lease_owner = models.UUIDField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class PrescriptionWorkflowCheckpoint(models.Model):
+    run = models.ForeignKey(PrescriptionWorkflowRun, on_delete=models.CASCADE, related_name="checkpoints")
+    namespace = models.CharField(max_length=255, blank=True)
+    checkpoint_id = models.CharField(max_length=64)
+    parent_checkpoint_id = models.CharField(max_length=64, blank=True)
+    payload_type = models.CharField(max_length=32)
+    payload = models.BinaryField()
+    metadata_type = models.CharField(max_length=32)
+    metadata = models.BinaryField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["run", "namespace", "checkpoint_id"], name="prescription_checkpoint_identity")]
+        ordering = ("-checkpoint_id",)
+
+
+class PrescriptionWorkflowWrite(models.Model):
+    run = models.ForeignKey(PrescriptionWorkflowRun, on_delete=models.CASCADE, related_name="pending_writes")
+    namespace = models.CharField(max_length=255, blank=True)
+    checkpoint_id = models.CharField(max_length=64)
+    task_id = models.CharField(max_length=255)
+    task_path = models.TextField(blank=True)
+    write_index = models.IntegerField()
+    channel = models.CharField(max_length=255)
+    payload_type = models.CharField(max_length=32)
+    payload = models.BinaryField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["run", "namespace", "checkpoint_id", "task_id", "write_index"], name="prescription_pending_write_identity")]
+
+
+class PrescriptionProviderBudget(models.Model):
+    scope_key = models.CharField(max_length=64, unique=True)
+    model_name = models.CharField(max_length=128)
+    window_started_at = models.DateTimeField()
+    requests_reserved = models.PositiveBigIntegerField(default=0)
+    token_units_reserved = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)

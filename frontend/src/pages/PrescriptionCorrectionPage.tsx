@@ -4,9 +4,11 @@ import { ArrowLeft } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
+  loadLatestPrescriptionExtraction,
   approvePrescriptionReview,
   fetchEntriesOptions,
   fetchPrescriptionDocument,
+  fetchPrescriptionRepairProposals,
   publishPrescriptionReview,
   prescriptionPreviewUrl,
   startPrescriptionReview,
@@ -16,6 +18,7 @@ import {
 } from "../api";
 import { normalizePathologyFormDraft } from "../components/intake/ObservationFormSections";
 import { LongitudinalDraftWorkspace } from "../components/intake/LongitudinalDraftWorkspace";
+import { RepairProposalPanel, adoptRepairProposal } from "../components/intake/RepairProposalPanel";
 import { authoritativeOptionResources } from "../components/intake/observationFieldSchema";
 
 function errorMessage(error: unknown) {
@@ -32,11 +35,13 @@ export default function PrescriptionCorrectionPage() {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
   const documentQuery = useQuery({ queryKey: ["prescription-document", id], queryFn: () => fetchPrescriptionDocument(id), enabled: Number.isSafeInteger(id) && id > 0 });
+  const repairQuery = useQuery({ queryKey: ["prescription-repair-proposals", id, review?.revision], queryFn: () => fetchPrescriptionRepairProposals(id), enabled: Boolean(review) });
   const catalogQuery = useQuery({ queryKey: ["prescription-review-options"], queryFn: () => fetchEntriesOptions(authoritativeOptionResources), staleTime: 0 });
   const startMutation = useMutation({ mutationFn: () => startPrescriptionReview(id) });
-  const saveMutation = useMutation({ mutationFn: (next: LongitudinalIntakeDraft) => updatePrescriptionReview(id, { reviewed_data: next }) });
-  const approveMutation = useMutation({ mutationFn: () => approvePrescriptionReview(id) });
-  const publishMutation = useMutation({ mutationFn: () => publishPrescriptionReview(id) });
+  const saveMutation = useMutation({ mutationFn: (next: LongitudinalIntakeDraft) => updatePrescriptionReview(id, { reviewed_data: next, expected_revision: review?.revision }) });
+  const approveMutation = useMutation({ mutationFn: (revision: number) => approvePrescriptionReview(id, revision) });
+  const refreshMutation = useMutation({ mutationFn: (runId: number) => loadLatestPrescriptionExtraction(id, review!.revision, runId) });
+  const publishMutation = useMutation({ mutationFn: () => publishPrescriptionReview(id, review?.revision) });
 
   useEffect(() => {
     const existing = documentQuery.data?.review;
@@ -46,7 +51,7 @@ export default function PrescriptionCorrectionPage() {
       return;
     }
     if (documentQuery.data && !startMutation.isPending && !startMutation.data) startMutation.mutate();
-  }, [documentQuery.data, startMutation]);
+  }, [documentQuery.data, startMutation.isPending, startMutation.data, startMutation.mutate]);
 
   useEffect(() => {
     if (!startMutation.data) return;
@@ -73,9 +78,15 @@ export default function PrescriptionCorrectionPage() {
 
   const approve = async () => {
     setError("");
-    if ((dirty || (draft && JSON.stringify(normalizePathologyFormDraft(draft)) !== JSON.stringify(draft))) && !(await save())) return;
+    let approvalRevision = review?.revision;
+    if (dirty || (draft && JSON.stringify(normalizePathologyFormDraft(draft)) !== JSON.stringify(draft))) {
+      const saved = await save();
+      if (!saved) return;
+      approvalRevision = saved.revision;
+    }
+    if (approvalRevision === undefined) return;
     try {
-      const approved = await approveMutation.mutateAsync();
+      const approved = await approveMutation.mutateAsync(approvalRevision);
       setReview(approved);
       setDraft(approved.reviewed_data);
       setDirty(false);
@@ -102,6 +113,10 @@ export default function PrescriptionCorrectionPage() {
 
   const published = Boolean(review.published_at);
   const locked = published || review.status === "approved" || review.status === "rejected";
+  const latestRun = documentQuery.data.extraction_runs?.[0];
+  const canRefresh = documentQuery.data.status === "ready_for_review" && !locked && review.revision === 1 && !review.changes?.length && !review.selected_patient && !review.notes
+    && draft.patient.match_status === "unresolved" && latestRun?.status === "completed"
+    && new Date(latestRun.created_at) > new Date(review.created_at);
   const previewDocument = { ...documentQuery.data, file: prescriptionPreviewUrl(documentQuery.data.file) };
-  return <section className="page-grid prescription-correction-page"><Link className="text-button" to="/prescriptions"><ArrowLeft size={16} />Prescription queue</Link><LongitudinalDraftWorkspace document={previewDocument} draft={draft} catalog={catalogQuery.data ?? {}} disabled={locked} saving={saveMutation.isPending} approving={approveMutation.isPending} publishing={publishMutation.isPending} dirty={dirty} error={error} onChange={(next) => { setDraft(next); setDirty(true); }} onSave={() => { void save(); }} onApprove={review.status === "draft" || review.status === "in_review" ? () => { void approve(); } : undefined} onPublish={review.status === "approved" ? () => { void publish(); } : undefined} /> </section>;
+  return <section className="page-grid prescription-correction-page"><Link className="text-button" to="/prescriptions"><ArrowLeft size={16} />Prescription queue</Link>{canRefresh ? <div className="panel"><strong>Newer extraction available</strong><p>Load its suggestions into this untouched draft. The previous draft is retained in the review history.</p><button type="button" className="secondary-button" disabled={dirty || refreshMutation.isPending || saveMutation.isPending || approveMutation.isPending} onClick={async () => { setError(""); try { const saved = await refreshMutation.mutateAsync(latestRun.id); setReview(saved); setDraft(saved.reviewed_data); setDirty(false); queryClient.setQueryData(["prescription-document", id], { ...documentQuery.data, review: saved }); queryClient.invalidateQueries({ queryKey: ["prescription-documents"] }); } catch (exception) { setError(errorMessage(exception)); } }}>Load latest extraction</button>{dirty ? <small>Unsaved edits must be preserved; refresh is unavailable.</small> : null}</div> : null}<RepairProposalPanel proposals={repairQuery.data?.proposals ?? []} disabled={locked || dirty || repairQuery.data?.revision !== review.revision} onAdopt={(proposal) => { try { if (proposal.review_revision !== review.revision) throw new Error("This suggestion belongs to an older saved revision."); setDraft(adoptRepairProposal(draft, proposal)); setDirty(true); setError(""); } catch (exception) { setError(errorMessage(exception)); } }} /><LongitudinalDraftWorkspace document={previewDocument} draft={draft} catalog={catalogQuery.data ?? {}} disabled={locked || refreshMutation.isPending} saving={saveMutation.isPending || refreshMutation.isPending} approving={approveMutation.isPending || refreshMutation.isPending} publishing={publishMutation.isPending} dirty={dirty} error={error} onChange={(next) => { setDraft(next); setDirty(true); }} onSave={() => { void save(); }} onApprove={review.status === "draft" || review.status === "in_review" ? () => { void approve(); } : undefined} onPublish={review.status === "approved" ? () => { void publish(); } : undefined} /> </section>;
 }

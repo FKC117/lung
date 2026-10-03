@@ -2,6 +2,8 @@
 
 import re
 import unicodedata
+import json
+from hashlib import sha256
 from copy import deepcopy
 from difflib import SequenceMatcher
 
@@ -11,71 +13,10 @@ from options.api_views import OPTION_RESOURCES
 from prescriptions.models import PrescriptionDrugAlias
 
 
-OPTION_FIELDS = {
-    "comorbidities": {"comorbidity": "comorbidities"},
-    "diagnoses": {
-        "disease_group": "diagnosis-disease-groups",
-        "disease_subgroup": "diagnosis-disease-subgroups",
-        "primary_site": "diagnosis-primary-sites",
-        "laterality": "diagnosis-lateralities",
-        "metastatic_sites": "diagnosis-metastatic-sites",
-    },
-    "histopathologies": {
-        "histopathology_details": "histopathology-details",
-        "histopathology_type": "histopathology-types",
-        "histopathology_site": "histopathology-sites",
-        "histopathology_grade": "histopathology-grades",
-    },
-    "ihc_results": {"marker": "ihc-cycles", "reported_result": "ihc-cycle-results", "result": "ihc-cycle-results"},
-    "pathological_staging_results": {"feature": "ihc-staging-cycles", "result": "ihc-staging-cycle-results"},
-    "clinical_tnm_stagings": {"t": "tnm-t", "n": "tnm-n", "m": "tnm-m", "stage": "tnm-stages"},
-    "pathological_tnm_stagings": {"t": "tnm-t", "n": "tnm-n", "m": "tnm-m", "stage": "tnm-stages"},
-    "molecular_tests": {
-        "method": "molecular-methods",
-        "specimen": "molecular-specimens",
-        "gene": "molecular-genes",
-        "partner_gene": "molecular-genes",
-        "exon": "molecular-exons",
-        "alteration_type": "molecular-alteration-types",
-        "reported_result": "molecular-results",
-        "result": "molecular-results",
-        "clinical_significance": "molecular-clinical-significances",
-        "panel": "molecular-panels",
-        "panel_version": "molecular-panel-versions",
-        "panel_target": "molecular-panel-targets",
-    },
-    "cancer_markers": {"marker": "cancer-marker-names", "marker_name": "cancer-marker-names"},
-    "treatments": {
-        "modality": "treatment-modalities",
-        "line_of_treatment": "lines-of-treatment",
-        "protocol": "treatment-protocols",
-        "drug": "treatment-drugs",
-        "protocol_drug": "treatment-protocol-drugs",
-    },
-    "surgeries": {"modality": "surgery-modalities", "laterality": "surgery-lateralities"},
-    "radiotherapies": {"site": "radiotherapy-sites", "intent": "radiotherapy-intents", "modality": "radiotherapy-modalities"},
-    "recist_assessments": {
-        "target_lesion": "recist-target-lesions",
-        "non_target_lesion": "recist-non-target-lesions",
-        "new_lesion": "recist-new-lesions",
-        "overall_response": "recist-response-results",
-        "estimation_method": "response-estimation-methods",
-    },
-    "irecist_assessments": {
-        "target_lesion": "irecist-target-lesions",
-        "non_target_lesion": "irecist-non-target-lesions",
-        "new_lesion": "irecist-new-lesions",
-        "overall_response": "irecist-response-results",
-        "estimation_method": "response-estimation-methods",
-    },
-    "pathological_responses": {
-        "response_category": "pathological-response-categories",
-        "tumor_regression_grade": "tumor-regression-grades",
-        "estimation_method": "response-estimation-methods",
-    },
-    "progression_records": {"status": "disease-progression-statuses", "progression_sites": "progression-sites", "estimation_method": "response-estimation-methods"},
-    "survival_records": {"status": "survival-statuses"},
-}
+from prescriptions.services.field_contract import option_fields, DEPENDENCIES
+from prescriptions.services.readiness import record_issues
+
+OPTION_FIELDS = option_fields()
 
 MULTI_OPTION_FIELDS = {("diagnoses", "metastatic_sites"), ("progression_records", "progression_sites")}
 ICD10_CODE_RESOURCES = {"diagnosis-disease-groups", "diagnosis-disease-subgroups"}
@@ -88,26 +29,15 @@ RETIRED_PARENT_SCOPED_FIELDS = {
     "treatments": {"protocol_cycle", "treatment_protocol_cycle"},
 }
 
-RESOLUTION_SCOPES = {
-    ("diagnoses", "disease_subgroup"): {"disease_group_id": "disease_group"},
-    ("molecular_tests", "exon"): {"gene_id": "gene"},
-    ("molecular_tests", "panel_version"): {"panel_id": "panel"},
-    ("molecular_tests", "panel_target"): {
-        "panel_version_id": "panel_version",
-        "gene_id": "gene",
-        "alteration_type_id": "alteration_type",
-    },
-    ("treatments", "protocol_drug"): {
-        "protocol_id": "protocol",
-        "drug_id": "drug",
-    },
-}
+RESOLUTION_SCOPES = {(collection, field): scopes for collection, definitions in DEPENDENCIES.items() for field, scopes in definitions.items()}
 
 
 def normalize(value):
     value = unicodedata.normalize("NFKD", str(value or "")).casefold()
     value = "".join(character for character in value if not unicodedata.combining(character))
-    return re.sub(r"[^a-z0-9]+", "", value)
+    # Retain clinical polarity, comparison signs and decimal punctuation.
+    # HER2+ must never become an exact normalized match for HER2-.
+    return re.sub(r"[^a-z0-9+\-<>=%.]+", "", value)
 
 
 def normalize_icd10_code(value):
@@ -124,6 +54,12 @@ def _candidate(option, method, score=1.0):
     }
 
 
+def catalog_fingerprint(resource):
+    catalog = list(OPTION_RESOURCES[resource].objects.order_by("pk").values())
+    aliases = list(PrescriptionDrugAlias.objects.filter(approved_by__isnull=False).order_by("pk").values("alias", "drug_id")) if resource == "treatment-drugs" else []
+    return sha256(json.dumps({"options": catalog, "aliases": aliases}, sort_keys=True, default=str).encode()).hexdigest()
+
+
 def _result(status, resource, raw_value, *, option=None, method=None, candidates=None, reason=""):
     return {
         "status": status,
@@ -133,10 +69,11 @@ def _result(status, resource, raw_value, *, option=None, method=None, candidates
         "match_method": method,
         "candidates": candidates or [],
         "reason": reason,
+        "catalog_fingerprint": catalog_fingerprint(resource),
     }
 
 
-def resolve_option(resource, value, *, filters=None):
+def resolve_option(resource, value, *, filters=None, allowed_ids=None):
     """Resolve only a unique approved option; fuzzy output is suggestion-only."""
     if resource not in OPTION_RESOURCES:
         raise ValidationError({"resource": "Unknown option resource."})
@@ -156,16 +93,26 @@ def resolve_option(resource, value, *, filters=None):
         raise ValidationError({"filters": f"Invalid scope for {resource}: {', '.join(sorted(invalid_filters))}."})
     if filters:
         queryset = queryset.filter(**filters)
+    if allowed_ids is not None:
+        queryset = queryset.filter(pk__in=allowed_ids)
     options = list(queryset)
 
     if resource == "treatment-drugs":
-        aliases = list(PrescriptionDrugAlias.objects.filter(alias__iexact=name).select_related("drug"))
+        aliases = list(PrescriptionDrugAlias.objects.filter(approved_by__isnull=False, alias__iexact=name, drug_id__in=[option.pk for option in options]).select_related("drug"))
         alias_drugs = {alias.drug_id: alias.drug for alias in aliases}
+        # An approved alias must not override a conflicting canonical name.
+        named = [option for option in options if option.name.casefold() == name.casefold()]
+        if alias_drugs and any(option.pk not in alias_drugs for option in named):
+            matches = {**alias_drugs, **{option.pk: option for option in named}}
+            return _result("ambiguous", resource, value, candidates=[_candidate(item, "alias_name_conflict") for item in matches.values()], reason="Approved alias conflicts with a canonical option name.")
         if len(alias_drugs) == 1:
             option = next(iter(alias_drugs.values()))
             return _result("resolved", resource, value, option=option, method="approved_alias")
         if len(alias_drugs) > 1:
             return _result("ambiguous", resource, value, candidates=[_candidate(item, "approved_alias") for item in alias_drugs.values()], reason="Multiple approved aliases matched.")
+
+    if not options:
+        return _result("unresolved", resource, value, reason="No approved options are available in this scope.")
 
     if resource in ICD10_CODE_RESOURCES:
         target_code = normalize_icd10_code(name)
@@ -215,14 +162,42 @@ def resolve_draft_options(draft):
                     if isinstance(existing, dict) and existing.get("option_id") is not None:
                         continue
                     raw_value = values.get(field)
-                    if raw_value in (None, "") or isinstance(raw_value, (dict, list)):
+                    if raw_value in (None, "", []) or isinstance(raw_value, dict):
                         continue
                     filters = {}
+                    missing_parents = []
+                    allowed_ids = None
                     for filter_name, parent_field in RESOLUTION_SCOPES.get((collection, field), {}).items():
                         parent = resolutions.get(parent_field, {})
                         if parent.get("status") == "resolved" and parent.get("option_id") is not None:
                             filters[filter_name] = parent["option_id"]
-                    resolutions[field] = resolve_option(resource, str(raw_value), filters=filters)
+                        else:
+                            missing_parents.append(parent_field)
+                    if collection == "treatments" and field == "drug" and values.get("protocol") not in (None, ""):
+                        protocol_id = resolutions.get("protocol", {}).get("option_id")
+                        if protocol_id is None:
+                            missing_parents.append("protocol")
+                        else:
+                            allowed_ids = OPTION_RESOURCES["treatment-protocol-drugs"].objects.filter(protocol_id=protocol_id).values_list("drug_id", flat=True)
+                    if (collection, field) in MULTI_OPTION_FIELDS and not isinstance(raw_value, list):
+                        resolutions[field] = {**_result("unresolved", resource, raw_value, reason="Extracted text requires explicit multi-select choices."), "option_ids": []}
+                    elif missing_parents:
+                        resolutions[field] = _result("unresolved", resource, raw_value, reason="Resolve parent fields first: " + ", ".join(missing_parents))
+                    elif (collection, field) in MULTI_OPTION_FIELDS and isinstance(raw_value, list):
+                        matches = [resolve_option(resource, item, filters=filters) for item in raw_value]
+                        ids = [item["option_id"] for item in matches if item["status"] == "resolved"]
+                        complete = len(ids) == len(matches) and len(ids) == len(set(ids))
+                        resolutions[field] = {
+                            **_result("resolved" if complete else "unresolved", resource, raw_value,
+                                      reason="" if complete else "Every extracted selection must match a distinct approved option."),
+                            "option_ids": ids if complete else [], "matches": matches,
+                        }
+                        if complete:
+                            values[field] = ids
+                    else:
+                        resolutions[field] = resolve_option(resource, str(raw_value), filters=filters, allowed_ids=allowed_ids)
+                    if (collection, field) in MULTI_OPTION_FIELDS and "option_ids" not in resolutions[field]:
+                        resolutions[field] = {**resolutions[field], "status": "unresolved", "option_id": None, "option_ids": []}
                     if resolutions[field]["status"] in {"ambiguous", "unresolved"}:
                         record["state"] = "unresolved"
     return resolved
@@ -366,6 +341,9 @@ def _validate_record_hierarchies(collection, record):
 
 def validate_approval_readiness(draft):
     """Reject approval while any review decision remains unresolved."""
+    from .fact_decisions import reconcile_fact_decisions, validate_clinical_fact_coverage
+    draft = reconcile_fact_decisions(draft)
+    validate_clinical_fact_coverage(draft)
     errors = []
     if draft.get("patient", {}).get("match_status") == "unresolved":
         errors.append("Patient matching is unresolved.")
@@ -381,6 +359,7 @@ def validate_approval_readiness(draft):
                     errors.append(f"{path} is unresolved.")
                 values = record.get("values", {})
                 resolutions = record.get("resolutions", {})
+                errors.extend(f"{path}: {issue}" for issue in record_issues(collection, record))
                 for field in retired_fields:
                     if values.get(field) not in (None, ""):
                         errors.append(f"{path}.{field} has no active controlled option and remains unresolved.")
@@ -394,6 +373,10 @@ def validate_approval_readiness(draft):
                 for field, resolution in resolutions.items():
                     if resolution.get("status") in {"ambiguous", "unresolved"}:
                         errors.append(f"{path}.{field} is {resolution.get('status')}.")
+                    fingerprint = resolution.get("catalog_fingerprint")
+                    if resolution.get("status") == "resolved" and fingerprint and resolution.get("match_method") != "reviewer_selected":
+                        if fingerprint != catalog_fingerprint(fields[field]):
+                            errors.append(f"{path}.{field}: catalog changed after automatic matching; select the current option again.")
     if errors:
         raise ValidationError({"approval": errors})
     return draft

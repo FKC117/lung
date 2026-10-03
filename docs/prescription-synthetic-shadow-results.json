@@ -1,0 +1,222 @@
+{
+  "synthetic_only": true,
+  "mode": "shadow",
+  "provider_calls": 0,
+  "clinical_writes": 0,
+  "field_metrics": {
+    "histopathologies.histopathology_type": {
+      "expected": 3,
+      "correct": 3,
+      "omitted": 0,
+      "incorrect": 0,
+      "accuracy": 1.0
+    },
+    "histopathologies.histopathology_site": {
+      "expected": 2,
+      "correct": 2,
+      "omitted": 0,
+      "incorrect": 0,
+      "accuracy": 1.0
+    },
+    "histopathologies.report_date": {
+      "expected": 1,
+      "correct": 1,
+      "omitted": 0,
+      "incorrect": 0,
+      "accuracy": 1.0
+    },
+    "histopathologies.report_summary": {
+      "expected": 2,
+      "correct": 2,
+      "omitted": 0,
+      "incorrect": 0,
+      "accuracy": 1.0
+    },
+    "treatments.administered_on": {
+      "expected": 2,
+      "correct": 2,
+      "omitted": 0,
+      "incorrect": 0,
+      "accuracy": 1.0
+    },
+    "treatments.drug": {
+      "expected": 1,
+      "correct": 1,
+      "omitted": 0,
+      "incorrect": 0,
+      "accuracy": 1.0
+    }
+  },
+  "cases": [
+    {
+      "case": "canonical-pathology",
+      "fields": [
+        {
+          "path": "histopathologies.0.histopathology_type",
+          "correct": true,
+          "omitted": false
+        },
+        {
+          "path": "histopathologies.0.histopathology_site",
+          "correct": true,
+          "omitted": false
+        },
+        {
+          "path": "histopathologies.0.report_date",
+          "correct": true,
+          "omitted": false
+        }
+      ],
+      "accounted_facts": 3,
+      "expected_facts": 3,
+      "missing_exception_types": [],
+      "exception_count": 0,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "legacy-pathology-aliases",
+      "fields": [
+        {
+          "path": "histopathologies.0.histopathology_type",
+          "correct": true,
+          "omitted": false
+        },
+        {
+          "path": "histopathologies.0.histopathology_site",
+          "correct": true,
+          "omitted": false
+        }
+      ],
+      "accounted_facts": 2,
+      "expected_facts": 2,
+      "missing_exception_types": [],
+      "exception_count": 0,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "narrative-is-not-a-type",
+      "fields": [
+        {
+          "path": "histopathologies.0.report_summary",
+          "correct": true,
+          "omitted": false
+        }
+      ],
+      "accounted_facts": 1,
+      "expected_facts": 1,
+      "missing_exception_types": [],
+      "exception_count": 0,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "conflicting-alias",
+      "fields": [
+        {
+          "path": "histopathologies.0.histopathology_type",
+          "correct": true,
+          "omitted": false
+        }
+      ],
+      "accounted_facts": 2,
+      "expected_facts": 2,
+      "missing_exception_types": [],
+      "exception_count": 1,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "ambiguous-date",
+      "fields": [],
+      "accounted_facts": 1,
+      "expected_facts": 1,
+      "missing_exception_types": [],
+      "exception_count": 2,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "repeated-administrations",
+      "fields": [
+        {
+          "path": "treatments.0.administered_on",
+          "correct": true,
+          "omitted": false
+        },
+        {
+          "path": "treatments.1.administered_on",
+          "correct": true,
+          "omitted": false
+        }
+      ],
+      "accounted_facts": 6,
+      "expected_facts": 6,
+      "missing_exception_types": [],
+      "exception_count": 0,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "empty-drug-catalog",
+      "fields": [
+        {
+          "path": "treatments.0.drug",
+          "correct": true,
+          "omitted": false
+        }
+      ],
+      "accounted_facts": 1,
+      "expected_facts": 1,
+      "missing_exception_types": [],
+      "exception_count": 0,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "unsupported-fact",
+      "fields": [],
+      "accounted_facts": 1,
+      "expected_facts": 1,
+      "missing_exception_types": [],
+      "exception_count": 1,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "invented-source-quote",
+      "fields": [],
+      "accounted_facts": 1,
+      "expected_facts": 1,
+      "missing_exception_types": [],
+      "exception_count": 1,
+      "baseline_parity": true,
+      "passed": true
+    },
+    {
+      "case": "document-instruction-injection",
+      "fields": [
+        {
+          "path": "histopathologies.0.report_summary",
+          "correct": true,
+          "omitted": false
+        }
+      ],
+      "accounted_facts": 1,
+      "expected_facts": 1,
+      "missing_exception_types": [],
+      "exception_count": 0,
+      "baseline_parity": true,
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "unmeasured": [
+    "provider extraction accuracy",
+    "catalog auto-selection accuracy",
+    "observed reviewer corrections and time",
+    "production failure rate"
+  ],
+  "limitations": "Hand-annotated engineering fixtures; shadow parity compares orchestration using shared services, not an independent clinical truth set. Production clinical thresholds remain owner gates."
+}

@@ -1,10 +1,11 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import FileResponse
 from rest_framework import mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from django.db import transaction
 from django.utils import timezone
 from django.views.decorators.clickjacking import xframe_options_sameorigin
-from rest_framework.exceptions import MethodNotAllowed, NotFound, ValidationError
+from rest_framework.exceptions import APIException, MethodNotAllowed, NotFound, ValidationError
 from rest_framework.response import Response
 
 from .models import PrescriptionBatchJob, PrescriptionDocument, PrescriptionReview, PrescriptionReviewChange
@@ -15,10 +16,26 @@ from .services.draft_schema import is_canonical_draft
 from .services.extraction import has_clinical_observation, source_has_clinical_signal
 from .services.intake_draft import build_intake_draft
 from .services.publish import publish_review
+from .services.provider_data_policy import ProviderDataPolicyError
+from .services.provider_budget import ProviderBudgetExhausted, ProviderBudgetConfigurationError
 from .tasks import process_prescription_document, sync_prescription_batch_job
 
 
 _MISSING = object()
+
+
+class ReviewRevisionConflict(APIException):
+    status_code = 409
+    default_detail = "This review changed. Reload it before saving or approving."
+
+
+def check_review_revision(review, request, *, required=False):
+    expected = request.data.get("expected_revision")
+    if required and expected is None:
+        raise ValidationError({"expected_revision": "Approval and publication require the saved review revision."})
+    # Legacy draft-save clients remain compatible; final actions require a revision.
+    if expected is not None and (not isinstance(expected, int) or isinstance(expected, bool) or expected != review.revision):
+        raise ReviewRevisionConflict()
 
 
 def has_gemini_quality_issue(document):
@@ -165,7 +182,10 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
 
     def _existing_review(self, document):
         try:
-            return document.review
+            queryset = PrescriptionReview.objects
+            if transaction.get_connection().in_atomic_block:
+                queryset = queryset.select_for_update()
+            return queryset.get(document=document)
         except PrescriptionReview.DoesNotExist as exc:
             raise NotFound("Start a review before viewing or changing it.") from exc
 
@@ -174,17 +194,59 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         review = self._start_review(self.get_object(), request.user)
         return Response(PrescriptionReviewSerializer(review).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=["post"], url_path="load-latest-extraction")
+    @transaction.atomic
+    def load_latest_extraction(self, request, pk=None):
+        document = self.get_object()
+        review = self._existing_review(document)
+        check_review_revision(review, request, required=True)
+        if (document.status != PrescriptionDocument.Status.READY_FOR_REVIEW or review.published_at
+                or review.status not in {PrescriptionReview.Status.DRAFT, PrescriptionReview.Status.IN_REVIEW}
+                or review.revision != 1 or review.changes.exists() or review.notes
+                or review.selected_patient_id or document.patient_id
+                or review.reviewed_data.get("patient", {}).get("match_status") != "unresolved"
+                or any(record.get("state") == "edited" for observation in review.reviewed_data.get("observations", [])
+                       for records in observation.values() if isinstance(records, list)
+                       for record in records if isinstance(record, dict))):
+            raise ValidationError({"detail": "Only an untouched, unassigned draft can load a newer extraction. Existing reviewer edits are protected."})
+        latest = document.extraction_runs.first()
+        if not latest or latest.status != "completed" or latest.pk != request.data.get("extraction_run_id"):
+            raise ValidationError({"detail": "The extraction changed or is incomplete. Reload the document."})
+        if latest.created_at <= review.created_at:
+            raise ValidationError({"detail": "There is no newer extraction to load."})
+        source = latest.structured_data
+        try:
+            draft = build_intake_draft(source.get("canonical_draft", source), document_id=document.pk,
+                                      pages=list(document.pages.all()))
+        except (DjangoValidationError, ValueError, TypeError) as exc:
+            raise ValidationError({"detail": "The latest extraction cannot form a valid draft. Existing review is preserved."}) from exc
+        if draft["patient"]["patient_id"] or draft["patient"]["match_status"] != "unresolved":
+            raise ValidationError({"detail": "The extraction cannot select a patient."})
+        previous = review.reviewed_data
+        review.reviewed_data = draft
+        review.revision += 1
+        review.approved_revision = None
+        review.status = PrescriptionReview.Status.IN_REVIEW
+        review.assigned_to = review.assigned_to or request.user
+        review.save()
+        PrescriptionReviewChange.objects.create(review=review, changed_by=request.user,
+            field_path="extraction_refresh", previous_value=previous,
+            new_value={"extraction_run_id": latest.pk, "reviewed_data": draft})
+        return Response(PrescriptionReviewSerializer(review).data)
+
     @action(detail=True, methods=["get", "patch"], url_path="review")
+    @transaction.atomic
     def review(self, request, pk=None):
         review = self._existing_review(self.get_object())
         if request.method == "GET":
             return Response(PrescriptionReviewSerializer(review).data)
+        check_review_revision(review, request)
         if review.status in {PrescriptionReview.Status.APPROVED, PrescriptionReview.Status.REJECTED}:
             raise ValidationError({"detail": "A completed review cannot be edited. Start a new review if correction is required."})
         serializer = PrescriptionReviewUpdateSerializer(
             data=request.data,
             partial=True,
-            context={"document_id": review.document_id},
+            context={"document_id": review.document_id, "previous_draft": review.reviewed_data},
         )
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
@@ -204,6 +266,9 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
                 changes.append(("notes", review.notes, serializer.validated_data["notes"]))
                 review.notes = serializer.validated_data["notes"]
             review.status = PrescriptionReview.Status.IN_REVIEW
+            if changes:
+                review.revision += 1
+                review.approved_revision = None
             review.assigned_to = review.assigned_to or request.user
             review.save()
             PrescriptionReviewChange.objects.bulk_create([
@@ -212,9 +277,39 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
             ])
         return Response(PrescriptionReviewSerializer(review).data)
 
+    @action(detail=True, methods=["get"], url_path="repair-proposals")
+    def repair_proposals(self, request, pk=None):
+        """Expose only revalidated saved proposals to the authorized document reviewer."""
+        import json
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .services.repair_contract import validate_repair_proposal
+        document = self.get_object()
+        review = self._existing_review(document)
+        proposals = []
+        if review.status not in {"draft", "in_review"} or review.published_at:
+            return Response({"revision": review.revision, "proposals": proposals})
+        rows = document.workflow_runs.filter(versions__kind="targeted_repair").order_by("created_at")
+        for run in rows:
+            for row in run.checkpoints.filter(namespace="repair-proposal", payload_type="json"):
+                try:
+                    saved = run.checkpoints.get(namespace="repair-request", checkpoint_id=row.checkpoint_id, payload_type="json")
+                    reservation = json.loads(bytes(saved.payload))
+                    if reservation["review_id"] != review.pk:
+                        continue
+                    original = reservation["request"]
+                    proposal = json.loads(bytes(row.payload))
+                    checked = validate_repair_proposal(original, {"patches": proposal["patches"]}, current_draft=review.reviewed_data, current_revision=review.revision, document_sha256=document.sha256)
+                    proposals.append({"id": str(run.pk)+":"+row.checkpoint_id, "collection": original["collection"], "record_id": original["record_id"], "review_revision": checked["review_revision"], "patches": checked["patches"]})
+                except (DjangoValidationError, KeyError, TypeError, ValueError, run.checkpoints.model.DoesNotExist):
+                    # Invalid/stale/private artifacts are never promoted into form proposals.
+                    continue
+        return Response({"revision": review.revision, "proposals": proposals})
+
     @action(detail=True, methods=["post"], url_path="approve-review")
+    @transaction.atomic
     def approve_review(self, request, pk=None):
         review = self._existing_review(self.get_object())
+        check_review_revision(review, request, required=True)
         if review.status == PrescriptionReview.Status.REJECTED:
             raise ValidationError({"detail": "A rejected review cannot be approved."})
         validator = PrescriptionReviewUpdateSerializer(
@@ -224,16 +319,19 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         validator.is_valid(raise_exception=True)
         previous_status = review.status
         review.status = PrescriptionReview.Status.APPROVED
+        review.approved_revision = review.revision
         review.reviewed_by = request.user
         review.reviewed_at = timezone.now()
-        review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
+        review.save(update_fields=["status", "approved_revision", "reviewed_by", "reviewed_at", "updated_at"])
         PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="approved")
         return Response(PrescriptionReviewSerializer(review).data)
 
     @action(detail=True, methods=["post"], url_path="publish")
+    @transaction.atomic
     def publish(self, request, pk=None):
         """Publish a previously approved canonical draft, atomically and idempotently."""
         review = self._existing_review(self.get_object())
+        check_review_revision(review, request, required=True)
         observations, counts = publish_review(review, request.user)
         review.refresh_from_db()
         return Response({
@@ -261,8 +359,12 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=["post"], url_path="reopen-review")
+    @transaction.atomic
     def reopen_review(self, request, pk=None):
         review = self._existing_review(self.get_object())
+        check_review_revision(review, request)
+        if review.published_at:
+            raise ValidationError({"detail": "A published review cannot be reopened."})
         reason = request.data.get("reason", "").strip()
         if review.status != PrescriptionReview.Status.APPROVED:
             raise ValidationError({"detail": "Only an approved review can be reopened."})
@@ -272,9 +374,11 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         previous_reviewed_at = review.reviewed_at.isoformat() if review.reviewed_at else None
         with transaction.atomic():
             review.status = PrescriptionReview.Status.IN_REVIEW
+            review.revision += 1
+            review.approved_revision = None
             review.reviewed_by = None
             review.reviewed_at = None
-            review.save(update_fields=["status", "reviewed_by", "reviewed_at", "updated_at"])
+            review.save(update_fields=["status", "revision", "approved_revision", "reviewed_by", "reviewed_at", "updated_at"])
             PrescriptionReviewChange.objects.bulk_create([
                 PrescriptionReviewChange(review=review, changed_by=request.user, field_path="status", previous_value="approved", new_value="in_review"),
                 PrescriptionReviewChange(review=review, changed_by=request.user, field_path="reviewed_by", previous_value=previous_reviewer, new_value=None),
@@ -284,17 +388,23 @@ class PrescriptionDocumentViewSet(viewsets.ModelViewSet):
         return Response(PrescriptionReviewSerializer(review).data)
 
     @action(detail=True, methods=["post"], url_path="reject-review")
+    @transaction.atomic
     def reject_review(self, request, pk=None):
         review = self._existing_review(self.get_object())
+        check_review_revision(review, request)
+        if review.published_at:
+            raise ValidationError({"detail": "A published review cannot be rejected."})
         reason = request.data.get("reason", "").strip()
         if not reason:
             raise ValidationError({"reason": "A rejection reason is required."})
         previous_status = review.status
         review.status = PrescriptionReview.Status.REJECTED
+        review.revision += 1
+        review.approved_revision = None
         review.notes = reason
         review.reviewed_by = request.user
         review.reviewed_at = timezone.now()
-        review.save(update_fields=["status", "notes", "reviewed_by", "reviewed_at", "updated_at"])
+        review.save(update_fields=["status", "revision", "approved_revision", "notes", "reviewed_by", "reviewed_at", "updated_at"])
         PrescriptionReviewChange.objects.create(review=review, changed_by=request.user, field_path="status", previous_value=previous_status, new_value="rejected")
         return Response(PrescriptionReviewSerializer(review).data)
 
@@ -328,7 +438,15 @@ class PrescriptionBatchJobViewSet(mixins.CreateModelMixin, mixins.ListModelMixin
         )
         if authorized_ids != set(normalized_ids):
             raise ValidationError({"document_ids": "One or more documents are unavailable."})
-        job = create_batch_job(document_ids=normalized_ids, user=request.user, display_name=display_name)
+        try:
+            job = create_batch_job(document_ids=normalized_ids, user=request.user, display_name=display_name)
+        except ProviderDataPolicyError as exc:
+            raise ValidationError({"detail": str(exc), "code": "provider_data_policy"}) from exc
+        except ProviderBudgetConfigurationError as exc:
+            raise ValidationError({"detail": str(exc), "code": "provider_budget_configuration"}) from exc
+        except ProviderBudgetExhausted as exc:
+            return Response({"detail": "Shared provider budget is exhausted.", "retry_after_seconds": exc.retry_after_seconds},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS, headers={"Retry-After": str(exc.retry_after_seconds)})
         return Response(self.get_serializer(job).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="sync")

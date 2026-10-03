@@ -1,9 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { draftExceptions, exceptionValue, type DraftException } from "./draftExceptions";
+import { patientFieldSchema, anthropometrySectionSchema } from "./observationFieldSchema";
+import { originalContextValues } from "./sourceFacts";
+import { FactDecisionPanel } from "./FactDecisionPanel";
 import { Check, ChevronDown, ExternalLink, FileText, GitMerge, GitPullRequest, Maximize2, Minimize2, Plus, Save, Trash2 } from "lucide-react";
 import type { EntryOption, LongitudinalIntakeDraft, PrescriptionDocument } from "../../api";
 import { PatientFormSections } from "./PatientFormSections";
 import { ObservationFormSections } from "./ObservationFormSections";
-import { deleteObservation, emptyObservation, mergeObservations, moveRecord, observationCollections, recordCount, splitObservation, type ObservationCollection, type RecordRef } from "./draftWorkspace";
+import { deleteObservation, emptyObservation, mergeObservations, moveRecord, recordCount, splitObservation, type ObservationCollection, type RecordRef } from "./draftWorkspace";
 
 type Tab = "patient" | "diagnosis" | "pathology" | "treatment" | "outcome";
 type JsonRecord = Record<string, unknown>;
@@ -58,7 +62,7 @@ function GeminiPayload({ document }: { document: PrescriptionDocument }) {
   const alerts = ["warnings", "unresolved_items"].flatMap((key) => Array.isArray(payload[key]) ? payload[key] : []);
   return <details className="clinical-gemini-payload">
     <summary>Gemini structured payload <small>{observations.length} extracted observation{observations.length === 1 ? "" : "s"}</small></summary>
-    <p className="clinical-gemini-help">Read-only Gemini evidence. It is not saved until you validate the matching form fields.</p>
+    <p className="clinical-gemini-help">Original Gemini evidence is retained separately from your form edits. Review unresolved values before final approval.</p>
     {patient && Object.keys(patient).length ? <section><h4>Patient</h4><GeminiValue value={patient} /></section> : null}
     {observations.map((observation, index) => <details className="clinical-gemini-observation" key={index}><summary>Observation {index + 1} · {String(observation.temporal_context ?? "unknown")}</summary><GeminiValue value={Object.fromEntries(Object.entries(observation).filter(([key]) => key !== "temporal_context"))} /></details>)}
     {alerts.length ? <section className="clinical-gemini-alerts"><h4>Needs review</h4>{alerts.map((item, index) => <p key={index}>{asRecord(item)?.reason ? String(asRecord(item)?.reason) : String(item)}</p>)}</section> : null}
@@ -72,8 +76,29 @@ export function LongitudinalDraftWorkspace({ document, draft, catalog, disabled,
   const [selectedRecords, setSelectedRecords] = useState<Set<string>>(new Set());
   const [mergeTarget, setMergeTarget] = useState("");
   const [sourceExpanded, setSourceExpanded] = useState(false);
+  const [focusedException, setFocusedException] = useState<DraftException | null>(null);
   const selected = draft.observations.find((item) => item.temp_id === selectedId) ?? draft.observations[0];
   const evidence = useMemo(() => selected?.evidence_refs ?? [], [selected]);
+  useEffect(() => {
+    if (!focusedException) return;
+    if (!focusedException.recordId) {
+      const field = focusedException.field;
+      const label = [...patientFieldSchema, ...anthropometrySectionSchema.fields].find((item) => item.key === field)?.label ?? humanize(field ?? "");
+      const control = Array.from(window.document.querySelectorAll<HTMLElement>(".clinical-editor-column [data-intake-label]")).find((element) => element.dataset.intakeLabel?.toLowerCase() === label.toLowerCase());
+      const target = control?.querySelector<HTMLElement>("input, select, textarea");
+      target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      target?.focus();
+      return;
+    }
+    const card = Array.from(window.document.querySelectorAll<HTMLElement>("[data-record-id]")).find((element) => element.dataset.recordId === focusedException.recordId);
+    if (!card) return;
+    const section = card.closest("details");
+    if (section) section.open = true;
+    const field = Array.from(card.querySelectorAll<HTMLElement>("[data-clinical-field]")).find((element) => element.dataset.clinicalField === focusedException.field);
+    const target = field?.querySelector<HTMLElement>("input, select, textarea") ?? card;
+    target.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    target.focus();
+  }, [focusedException, tab, selectedId]);
   if (!selected) return null;
   const setDraft = (next: LongitudinalIntakeDraft, nextSelected = selected.temp_id) => { onChange(next); setSelectedId(nextSelected); setSelectedRecords(new Set()); };
   const split = () => {
@@ -84,16 +109,23 @@ export function LongitudinalDraftWorkspace({ document, draft, catalog, disabled,
     const next = splitObservation(draft, selected.temp_id, refs);
     setDraft(next, next.observations.at(-1)?.temp_id);
   };
-  const unresolved = [...draft.unresolved_items, ...observationCollections.flatMap((collection) => selected[collection].filter((record) => record.state === "unresolved").map(() => ({ reason: collection.replaceAll("_", " ") + " needs review" })))];
+  const unresolved = draftExceptions(draft);
+  const focusException = (issue: DraftException) => {
+    if (issue.observationId) setSelectedId(issue.observationId);
+    if (issue.collection) setTab((Object.entries(groups).find(([, collections]) => collections.includes(issue.collection!))?.[0] as Exclude<Tab, "patient">) ?? "diagnosis");
+    else setTab(issue.scope === "context" ? "diagnosis" : "patient");
+    setFocusedException({ ...issue });
+  };
   const pdf = document.original_filename.toLowerCase().endsWith(".pdf");
   return <section className="clinical-intake-workspace">
     <header className="clinical-intake-header"><div><p className="eyebrow">Prescription review</p><h2>{document.original_filename}</h2>{dirty ? <small className="clinical-dirty">Unsaved changes</small> : null}</div><div className="clinical-intake-actions"><button type="button" className="secondary-button" disabled={disabled || saving} onClick={onSave}><Save size={16} />Save draft</button>{onApprove ? <button type="button" className="primary-button" disabled={disabled || approving || saving} onClick={onApprove}><Check size={16} />Approve</button> : null}{onPublish ? <button type="button" className="primary-button" disabled={publishing} onClick={onPublish}>Publish</button> : null}</div></header>
     {error ? <p className="entry-error-message">{error}</p> : null}
     <div className="clinical-intake-grid">
       <aside className={"clinical-source-column" + (sourceExpanded ? " is-expanded" : "")}><details open><summary><FileText size={16} /> Prescription <ChevronDown size={15} /></summary><div className="clinical-source-actions"><button type="button" className="secondary-button" onClick={() => setSourceExpanded((current) => !current)}>{sourceExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}{sourceExpanded ? "Close full page" : "Full page"}</button><a className="secondary-button" href={document.file} target="_blank" rel="noreferrer"><ExternalLink size={15} />Open source</a></div><p className="clinical-source-help">{pdf ? "Use the PDF toolbar’s − / + controls to zoom. Full page gives the toolbar more room." : "Open source shows the original file at full size."}</p>{pdf ? <iframe title="Prescription preview" className="clinical-pdf" src={document.file} /> : <img className="clinical-image" src={document.file} alt="Prescription preview" />}<div className="clinical-evidence">{evidence.length ? evidence.map((item) => <p key={item.evidence_id}><small>p. {item.page ?? "—"}</small>{item.source_text}</p>) : <p>No linked evidence for this observation.</p>}</div><GeminiPayload document={document} /></details></aside>
-      <aside className="clinical-timeline-column"><div className="clinical-column-title"><strong>Observations</strong><button type="button" className="text-button" disabled={disabled} onClick={() => { const next = emptyObservation(); setDraft({ ...draft, observations: [...draft.observations, next] }, next.temp_id); }}><Plus size={15} />Add</button></div><div className="clinical-timeline">{draft.observations.map((observation) => <button type="button" key={observation.temp_id} className={observation.temp_id === selected.temp_id ? "is-selected" : ""} onClick={() => { setSelectedId(observation.temp_id); setSelectedRecords(new Set()); }}><span>{dateLabel(observation.observed_at || observation.prescription_date)}</span><strong>{observation.temporal_context}</strong><small>{recordCount(observation)} items</small></button>)}</div><div className="clinical-timeline-tools"><button type="button" className="secondary-button" disabled={disabled || !selectedRecords.size} onClick={split}><GitPullRequest size={14} />Split</button><select className="filter-select" value={mergeTarget} disabled={disabled} onChange={(event) => setMergeTarget(event.target.value)}><option value="">Merge into…</option>{draft.observations.filter((item) => item.temp_id !== selected.temp_id).map((item) => <option key={item.temp_id} value={item.temp_id}>{dateLabel(item.observed_at)}</option>)}</select><button type="button" className="secondary-button" disabled={disabled || !mergeTarget} onClick={() => mergeTarget && setDraft(mergeObservations(draft, selected.temp_id, mergeTarget), mergeTarget)}><GitMerge size={14} />Merge</button><button type="button" className="text-button danger-button" disabled={disabled || draft.observations.length === 1} onClick={() => setDraft(deleteObservation(draft, selected.temp_id))}><Trash2 size={14} />Delete</button></div></aside>
-      <main className="clinical-editor-column"><nav className="clinical-section-tabs">{tabs.map(([key, label]) => <button type="button" className={tab === key ? "is-active" : ""} key={key} onClick={() => setTab(key)}>{label}</button>)}</nav>{tab === "patient" ? <PatientFormSections patient={draft.patient} catalog={catalog} disabled={disabled} onChange={(patient) => onChange({ ...draft, patient })} /> : <ObservationFormSections observation={selected} collections={groups[tab]} catalog={catalog} disabled={disabled} selectedRecords={selectedRecords} onToggleRecord={(collection, tempId) => setSelectedRecords((current) => { const next = new Set(current); const key = collection + ":" + tempId; next.has(key) ? next.delete(key) : next.add(key); return next; })} onChange={(observation) => onChange({ ...draft, observations: draft.observations.map((item) => item.temp_id === observation.temp_id ? observation : item) })} moveTargets={draft.observations.filter((item) => item.temp_id !== selected.temp_id).map((item) => ({ id: item.temp_id, label: dateLabel(item.observed_at) }))} onMoveRecord={(collection, tempId, targetId) => setDraft(moveRecord(draft, selected.temp_id, targetId, { collection, tempId }))} />}</main>
+
+      <main className="clinical-editor-column"><div className="clinical-observation-bar"><label>Observation <select className="filter-select" aria-label="Current observation" value={selected.temp_id} onChange={(event) => { setSelectedId(event.target.value); setSelectedRecords(new Set()); }}>{draft.observations.map((observation, index) => <option key={observation.temp_id} value={observation.temp_id}>{index + 1} · {dateLabel(observation.observed_at || observation.prescription_date)} · {observation.temporal_context} · {recordCount(observation)} items</option>)}</select></label><details className="clinical-observation-menu"><summary>Manage observations</summary><button type="button" className="text-button" disabled={disabled} onClick={() => { const next = emptyObservation(); setDraft({ ...draft, observations: [...draft.observations, next] }, next.temp_id); }}><Plus size={15} />Add</button><div className="clinical-timeline-tools"><button type="button" className="secondary-button" disabled={disabled || !selectedRecords.size} onClick={split}><GitPullRequest size={14} />Split</button><select className="filter-select" value={mergeTarget} disabled={disabled} onChange={(event) => setMergeTarget(event.target.value)}><option value="">Merge into…</option>{draft.observations.filter((item) => item.temp_id !== selected.temp_id).map((item) => <option key={item.temp_id} value={item.temp_id}>{dateLabel(item.observed_at)}</option>)}</select><button type="button" className="secondary-button" disabled={disabled || !mergeTarget} onClick={() => mergeTarget && setDraft(mergeObservations(draft, selected.temp_id, mergeTarget), mergeTarget)}><GitMerge size={14} />Merge</button><button type="button" className="text-button danger-button" disabled={disabled || draft.observations.length === 1} onClick={() => setDraft(deleteObservation(draft, selected.temp_id))}><Trash2 size={14} />Delete</button></div></details></div><nav className="clinical-section-tabs">{tabs.map(([key, label]) => <button type="button" className={tab === key ? "is-active" : ""} key={key} onClick={() => setTab(key)}>{label}</button>)}</nav>{tab === "patient" ? <PatientFormSections extractedValues={originalContextValues(draft, "patient")} patient={draft.patient} catalog={catalog} disabled={disabled} onChange={(patient) => onChange({ ...draft, patient })} /> : <ObservationFormSections extractedContext={originalContextValues(draft, "observation", selected.temp_id)} extractedAnthropometry={originalContextValues(draft, "anthropometry", selected.temp_id)} observation={selected} collections={groups[tab]} catalog={catalog} disabled={disabled} selectedRecords={selectedRecords} onToggleRecord={(collection, tempId) => setSelectedRecords((current) => { const next = new Set(current); const key = collection + ":" + tempId; next.has(key) ? next.delete(key) : next.add(key); return next; })} onChange={(observation) => onChange({ ...draft, observations: draft.observations.map((item) => item.temp_id === observation.temp_id ? observation : item) })} moveTargets={draft.observations.filter((item) => item.temp_id !== selected.temp_id).map((item) => ({ id: item.temp_id, label: dateLabel(item.observed_at) }))} onMoveRecord={(collection, tempId, targetId) => setDraft(moveRecord(draft, selected.temp_id, targetId, { collection, tempId }))} />}</main>
     </div>
-    {unresolved.length ? <aside className="clinical-unresolved"><strong>Needs review</strong>{unresolved.map((item, index) => <span key={index}>• {String(item.reason || "Review this item")}</span>)}</aside> : null}
+    {unresolved.length ? <aside className="clinical-unresolved"><strong>Needs review · {unresolved.length}</strong>{unresolved.map((item) => <div key={item.id}><strong>{item.collection?.replaceAll("_", " ") ?? "Extraction"}{item.field ? ` · ${item.field.replaceAll("_", " ")}` : ""}</strong><p>{item.reason}</p>{item.action ? <p>Action: {item.action}</p> : null}{item.rawValue !== undefined ? <p>Extracted value: {exceptionValue(item.rawValue)}</p> : null}{item.source ? <p>{item.source}</p> : null}{item.candidates?.length ? <p>Suggested choices: {item.candidates.join(", ")}. Choose from the form dropdown.</p> : null}{item.observationId || item.recordId || item.scope === "patient" ? <button type="button" className="text-button" onClick={() => focusException(item)}>Review in form</button> : null}</div>)}</aside> : null}
+    <FactDecisionPanel draft={draft} disabled={disabled} onChange={onChange} />
   </section>;
 }

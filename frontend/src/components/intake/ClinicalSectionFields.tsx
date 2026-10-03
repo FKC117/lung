@@ -20,6 +20,7 @@ export interface ClinicalSectionFieldsProps {
   values: Record<string, unknown>;
   catalog?: Catalog;
   resolutions?: PrescriptionDraftRecord["resolutions"];
+  extractedValues?: Record<string, unknown>;
   binding?: "canonical" | "manual";
   disabled?: boolean;
   group?: ClinicalFieldDefinition["group"];
@@ -59,31 +60,39 @@ function derivedValue(field: ClinicalFieldDefinition, values: Record<string, unk
   return String(get(binding === "manual" ? manualFieldKey(field) : field.key) ?? "");
 }
 
-export function ClinicalSectionFields({ fields, values, catalog = {}, resolutions = {}, binding = "canonical", disabled, group, onChange }: ClinicalSectionFieldsProps) {
+export function ClinicalSectionFields({ fields, values, catalog = {}, resolutions = {}, extractedValues, binding = "canonical", disabled, group, onChange }: ClinicalSectionFieldsProps) {
   return <div className="entry-grid" data-clinical-schema-binding={binding}>
     {fields.filter((field) => !group || field.group === group).map((field) => {
+      const content = (() => {
       const valueKey = binding === "manual" ? manualFieldKey(field) : field.key;
       const raw = values[valueKey];
       const resolution = resolutions[field.key];
-      const extracted = binding === "canonical" && field.resource
-        ? <p className="entry-field-help clinical-extracted-value"><strong>Extracted value:</strong> {extractedText(resolution ? resolution.raw_value : raw)}</p>
+      const canClear = binding === "canonical" && field.resource && !field.readOnly && resolution?.status !== "resolved"
+        && raw !== undefined && raw !== null && raw !== "" && (!Array.isArray(raw) || raw.length > 0);
+      const clearPrefill = canClear ? <button type="button" className="text-button" disabled={disabled} onClick={() => onChange(field, field.multiple ? [] : "", [])}>Clear {field.label.toLowerCase()} prefill</button> : null;
+      const extracted = binding === "canonical" && (field.resource || (extractedValues && field.key in extractedValues))
+        ? <p className="entry-field-help clinical-extracted-value"><strong>Extracted value:</strong> {extractedText(extractedValues && field.key in extractedValues ? extractedValues[field.key] : resolution ? resolution.raw_value : raw)}</p>
         : null;
-      if (field.readOnly || field.type === "derived") return <IntakeTextField key={field.key} label={field.label} value={derivedValue(field, values, catalog, binding, resolutions)} onChange={() => undefined} readOnly disabled={disabled} />;
+      if (field.readOnly || field.type === "derived") return <IntakeTextField key={field.key} label={field.label} evidence={extracted} value={derivedValue(field, values, catalog, binding, resolutions)} onChange={() => undefined} readOnly disabled={disabled} />;
       if ((field.multiple || (binding === "manual" && field.manualMultiple)) && field.resource) {
         const selected = optionIds(raw, resolution);
-        return <label className="filter-field entry-span-full" key={field.key} data-clinical-field={field.key}><span>{field.label}{field.required ? " *" : ""}</span>{extracted}<select multiple className="filter-select entry-multiselect" disabled={disabled} value={selected} onChange={(event) => { const ids = Array.from(event.currentTarget.selectedOptions).map((option) => Number(option.value)); const options = (catalog[field.resource ?? ""] ?? []).filter((option) => ids.includes(option.id)); onChange(field, ids, options); }}>{(catalog[field.resource] ?? []).map((option) => <option key={option.id} value={option.id}>{option.name ?? option.display}</option>)}</select>{field.resource && !(catalog[field.resource] ?? []).length ? <p className="entry-field-help">No options configured for this field.</p> : null}</label>;
+        const control = <label className="filter-field entry-span-full" key={field.key} data-clinical-field={field.key}><span>{field.label}{field.required ? " *" : ""}</span>{extracted}<select multiple className="filter-select entry-multiselect" disabled={disabled} value={selected} onChange={(event) => { const ids = Array.from(event.currentTarget.selectedOptions).map((option) => Number(option.value)); const options = (catalog[field.resource ?? ""] ?? []).filter((option) => ids.includes(option.id)); onChange(field, ids, options); }}>{(catalog[field.resource] ?? []).map((option) => <option key={option.id} value={option.id}>{option.name ?? option.display}</option>)}</select>{field.resource && !(catalog[field.resource] ?? []).length ? <p className="entry-field-help">No options configured for this field.</p> : null}</label>;
+        return clearPrefill ? <div className="filter-field entry-span-full">{control}{!(catalog[field.resource] ?? []).length ? <p className="entry-field-help">Ask an authorized catalog administrator to configure {field.resource.replaceAll("-", " ")}.</p> : null}{clearPrefill}</div> : control;
       }
       if (field.resource) {
         const options = catalog[field.resource] ?? [];
+        const missingCatalogHelp = `No configured options. Ask an authorized catalog administrator to configure ${field.resource.replaceAll("-", " ")}.`;
         const selected = binding === "canonical" ? resolution?.option_id ?? "" : String(raw ?? "");
-        return <IntakeSelectField key={field.key} label={field.label} required={field.required} disabled={disabled} options={options} value={selected} evidence={extracted} help={!options.length ? "No options configured for this field." : undefined} placeholder={`Select ${field.label.toLowerCase()}`} onChange={(value, option) => onChange(field, option ? option.id : value, option ? [option] : [])} />;
+        return <IntakeSelectField key={field.key} label={field.label} required={field.required} disabled={disabled} options={options} value={selected} evidence={extracted} action={clearPrefill} help={!options.length ? missingCatalogHelp : undefined} placeholder={`Select ${field.label.toLowerCase()}`} onChange={(value, option) => onChange(field, option ? option.id : value, option ? [option] : [])} />;
       }
       if (field.type === "status" || field.type === "boolean") {
         const choices = field.type === "boolean" ? [{ value: "true", label: "Yes" }, { value: "false", label: "No" }] : field.choices ?? [];
-        return <label className="filter-field" key={field.key} data-clinical-field={field.key}><span>{field.label}{field.required ? " *" : ""}</span><select className="filter-select" disabled={disabled} value={String(raw ?? "")} onChange={(event) => onChange(field, field.type === "boolean" ? event.target.value === "true" : event.target.value)}><option value="">Select…</option>{choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></label>;
+        return <label className="filter-field" key={field.key} data-clinical-field={field.key}><span>{field.label}{field.required ? " *" : ""}</span>{extracted}<select className="filter-select" disabled={disabled} value={String(raw ?? "")} onChange={(event) => onChange(field, field.type === "boolean" ? event.target.value === "true" : event.target.value)}><option value="">Select…</option>{choices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select></label>;
       }
-      if (field.type === "textarea") return <IntakeTextArea key={field.key} label={field.label} disabled={disabled} value={String(raw ?? "")} onChange={(value) => onChange(field, value)} />;
-      return <IntakeTextField key={field.key} label={field.label} type={field.type} required={field.required} disabled={disabled} value={String(raw ?? "")} onChange={(value) => onChange(field, value)} />;
+      if (field.type === "textarea") return <IntakeTextArea key={field.key} label={field.label} evidence={extracted} disabled={disabled} value={String(raw ?? "")} onChange={(value) => onChange(field, value)} />;
+      return <IntakeTextField key={field.key} label={field.label} evidence={extracted} type={field.type} required={field.required} disabled={disabled} value={String(raw ?? "")} onChange={(value) => onChange(field, value)} />;
+      })();
+      return <div key={field.key} style={{ display: "contents" }} data-clinical-field={field.key}>{content}</div>;
     })}
   </div>;
 }
