@@ -51,7 +51,7 @@ export function PatientFormSections({ patient, catalog = {}, disabled, extracted
         let options = catalog[field.resource ?? ""] ?? [];
         if (field.key === "thana") options = typeof patient.values.district === "number" ? options.filter((option) => String(option.district) === String(patient.values.district)) : [];
         const value = patient.values[field.key] ?? "";
-        const evidence = extractedValues && field.key in extractedValues ? <p className="entry-field-help clinical-extracted-value"><strong>Extracted value:</strong> {originalValueText(extractedValues[field.key])}</p> : undefined;
+        const evidence = extractedValues && field.key in extractedValues ? <p className="entry-field-help clinical-extracted-value" data-extracted-present={originalValueText(extractedValues[field.key]) !== "Not supplied" && originalValueText(extractedValues[field.key]).trim() !== "" || undefined}><strong>Extracted value:</strong> {originalValueText(extractedValues[field.key])}</p> : undefined;
         return field.resource
           ? <IntakeSelectField key={field.key} label={field.label} evidence={evidence} value={String(value)} options={options} disabled={disabled} onChange={(selected, option) => update(field.key, option ? option.id : selected)} />
           : <IntakeTextField key={field.key} label={field.label} evidence={evidence} type={field.type} value={String(value)} disabled={disabled} onChange={(next) => update(field.key, next)} />;

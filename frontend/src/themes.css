@@ -379,3 +379,24 @@ html[data-theme] .clinical-chart-export-button:hover { background: var(--accent-
   html[data-theme] .response-assessment-grid { grid-template-columns: 1fr; }
   html[data-theme] .marker-chart-grid { grid-template-columns: 1fr; }
 }
+
+/* Highlight the complete field, including original evidence and its control.
+   This indicates available data, never clinician validation. */
+html[data-theme] .filter-field[data-field-populated='true'],
+html[data-theme] .filter-field:has(> .clinical-extracted-value[data-extracted-present='true']) {
+  background: var(--accent-soft);
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+  border-radius: 12px;
+  padding: 0.65rem;
+  min-width: 0;
+}
+html[data-theme] .clinical-extracted-value { color: var(--muted); }
+html[data-theme] .clinical-extracted-value strong { color: var(--accent); }
+html[data-theme] .filter-field:focus-within { outline-offset: 2px; }
+html[data-theme] .molecular-finding-card {
+  background: var(--surface-muted);
+  border-color: var(--border);
+}
+html[data-theme] .molecular-findings-header { border-color: var(--border); }
+html[data-theme] .molecular-findings-header h3 { color: var(--text); }

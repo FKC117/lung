@@ -81,7 +81,7 @@ export function scopedCatalog(record: PrescriptionDraftRecord, catalog: Catalog)
 }
 
 export function ObservationFormSections({ observation, catalog = {}, disabled, extractedContext, extractedAnthropometry, selectedRecords = new Set(), onToggleRecord, onChange, onMoveRecord, moveTargets = [], collections = observationCollections }: ObservationFormSectionsProps) {
-  const contextEvidence = (key: string) => extractedContext && key in extractedContext ? <p className="entry-field-help clinical-extracted-value"><strong>Extracted value:</strong> {originalValueText(extractedContext[key])}</p> : undefined;
+  const contextEvidence = (key: string) => extractedContext && key in extractedContext ? <p className="entry-field-help clinical-extracted-value" data-extracted-present={originalValueText(extractedContext[key]) !== "Not supplied" && originalValueText(extractedContext[key]).trim() !== "" || undefined}><strong>Extracted value:</strong> {originalValueText(extractedContext[key])}</p> : undefined;
   const updateRecord = (collection: ObservationCollection, tempId: string, updater: (record: PrescriptionDraftRecord) => PrescriptionDraftRecord) => onChange({ ...observation, [collection]: observation[collection].map((record) => record.temp_id === tempId ? updater(record) : record) });
   const removeRecord = (collection: ObservationCollection, tempId: string) => onChange({ ...observation, [collection]: observation[collection].filter((record) => record.temp_id !== tempId) });
   const addRecord = (collection: ObservationCollection) => onChange({ ...observation, [collection]: [...observation[collection], createBlankRecord(collection)] });

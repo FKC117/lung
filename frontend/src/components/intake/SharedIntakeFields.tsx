@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { EntryOption } from "../../api";
 
 interface FieldShellProps {
+  populated?: boolean;
   label: string;
   required?: boolean;
   fullWidth?: boolean;
@@ -12,8 +13,8 @@ interface FieldShellProps {
   kind: "text-field" | "select-field" | "textarea-field";
 }
 
-function FieldShell({ label, required, fullWidth, className = "", help, children, kind, action }: FieldShellProps) {
-  const field = <label className={`${fullWidth ? "filter-field entry-span-full" : "filter-field"} ${className}`.trim()} data-intake-component={kind} data-intake-label={label}>
+function FieldShell({ label, required, fullWidth, className = "", help, children, kind, action, populated }: FieldShellProps) {
+  const field = <label className={`${fullWidth ? "filter-field entry-span-full" : "filter-field"} ${className}`.trim()} data-field-populated={populated || undefined} data-intake-component={kind} data-intake-label={label}>
     <span>{label}{required ? " *" : ""}</span>
     {children}
     {help ? <p className="entry-field-help">{help}</p> : null}
@@ -36,7 +37,7 @@ export interface IntakeTextFieldProps {
 }
 
 export function IntakeTextField({ label, value, onChange, type = "text", required, readOnly, disabled, help, control, fullWidth, evidence }: IntakeTextFieldProps) {
-  return <FieldShell label={label} required={required} help={help} fullWidth={fullWidth} kind="text-field">
+  return <FieldShell label={label} required={required} help={help} fullWidth={fullWidth} populated={value.trim().length > 0} kind="text-field">
     {evidence}
     {control ?? <input className="auth-input" type={type} required={required} readOnly={readOnly} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} />}
   </FieldShell>;
@@ -57,7 +58,7 @@ export interface IntakeSelectFieldProps {
 }
 
 export function IntakeSelectField({ label, value, options, onChange, required, disabled, help, evidence, action, placeholder = "Select…", optionLabel = (option) => option.name ?? option.display }: IntakeSelectFieldProps) {
-  return <FieldShell label={label} required={required} help={help} action={action} kind="select-field">
+  return <FieldShell label={label} required={required} help={help} action={action} populated={String(value).trim().length > 0} kind="select-field">
     {evidence}
     <select className="filter-select" value={value} required={required} disabled={disabled} onChange={(event) => onChange(event.target.value, options.find((option) => String(option.id) === event.target.value))}>
       <option value="">{placeholder}</option>
@@ -78,7 +79,7 @@ export interface IntakeTextAreaProps {
 }
 
 export function IntakeTextArea({ label, value, onChange, disabled, fullWidth = true, className, help, evidence }: IntakeTextAreaProps) {
-  return <FieldShell label={label} fullWidth={fullWidth} className={className} help={help} kind="textarea-field">
+  return <FieldShell label={label} fullWidth={fullWidth} className={className} help={help} populated={value.trim().length > 0} kind="textarea-field">
     {evidence}
     <textarea className="auth-input entry-textarea" disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} />
   </FieldShell>;

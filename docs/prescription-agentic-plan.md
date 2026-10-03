@@ -637,3 +637,9 @@ Final verification on 2026-10-01: all 85 prescription backend tests passed, all 
 - Owner explicitly selected the strict clinical pass rule requested in this conversation. Every source fact must be accounted for, every incorrect/missing clinical field corrected, zero unresolved patient/date/pathology/treatment/dose/stage error published, and each saved draft clinician-validated. This is a release acceptance criterion, not patient-record approval or a claim that Gemini outputs already pass.
 - Field-level prefill/omission/selection metrics, correction count and active review time remain separately measured. No raw-provider accuracy or time-saving number is fabricated. The reviewed cohort/evaluation and pilot/final approval remain open.
 - Accepted main tasks: 42/46 = 91.3%. Remaining P0.2 general release data decision, P6.1 clinician evaluation, P6.4 pilot acceptance and P6.6 final release.
+
+### Form value highlighting - 2026-10-03
+
+- Supplementary UI improvement: populated fields and nonempty original extracted suggestions highlight the complete label/evidence/control box, including unmatched catalog values. Empty/Not supplied fields stay neutral.
+- Shared theme tokens supply the light/dark background, border and evidence text. Molecular finding cards and headings now follow the selected palette.
+- Main acceptance count remains 42/46 (91.3%); this visual refinement does not substitute for clinical evaluation or release decisions.
